@@ -1,22 +1,12 @@
 export type WhatsAppChannel = "default" | "b";
 
-export function getWhatsAppNumber(channel?: WhatsAppChannel | null): string {
-  if (channel === "b") {
-    return (
-      process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_2 ?? "972527188812"
-    );
-  }
-  return process.env.NEXT_PUBLIC_WHATSAPP_NUMBER ?? "972555662240";
+export function getWhatsAppNumber(_channel?: WhatsAppChannel | null): string {
+  return process.env.NEXT_PUBLIC_WHATSAPP_NUMBER ?? "972502156774";
 }
 
-export function getOrderEmail(channel?: WhatsAppChannel | null): string {
-  if (channel === "b") {
-    return (
-      process.env.NEXT_PUBLIC_ORDER_EMAIL_2 ?? "P27188812@GMAIL.COM"
-    ).toLowerCase();
-  }
+export function getOrderEmail(_channel?: WhatsAppChannel | null): string {
   return (
-    process.env.NEXT_PUBLIC_ORDER_EMAIL ?? "ykavanatalev@gmail.com"
+    process.env.NEXT_PUBLIC_ORDER_EMAIL ?? "salestzvi@gmail.com"
   ).toLowerCase();
 }
 

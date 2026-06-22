@@ -31,7 +31,7 @@ function LinkRow({
   }
 
   function shareWhatsApp() {
-    const text = `קטלוג כוונת הלב — היכנס להזמנה:\n${url}`;
+    const text = `bri-catalog — היכנס להזמנה:\n${url}`;
     window.open(
       `https://wa.me/?text=${encodeURIComponent(text)}`,
       "_blank",

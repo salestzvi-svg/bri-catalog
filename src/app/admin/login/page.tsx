@@ -44,7 +44,7 @@ export default function AdminLoginPage() {
       >
         <h1 className="mb-2 text-center text-2xl font-bold">כניסת מנהל</h1>
         <p className="mb-6 text-center text-sm text-gray-600">
-          קטלוג כוונת הלב
+          bri-catalog
         </p>
 
         <label className="mb-1 block text-sm font-medium">סיסמת מנהל</label>

@@ -37,7 +37,7 @@ export default function AdminNav() {
             {isSuperAdmin ? "מנהל ראשי" : "לוח מנהל"}
           </p>
           <h1 className="text-xl font-bold text-emerald-800">
-            קטלוג כוונת הלב
+            bri-catalog
           </h1>
         </div>
         <button

@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "קטלוג כוונת הלב",
+  title: "bri-catalog",
   description: "קטלוג דיגיטלי להזמנות B2B",
 };
 

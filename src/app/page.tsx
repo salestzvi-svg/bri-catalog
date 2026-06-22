@@ -6,7 +6,7 @@ export default function HomePage() {
       <div className="w-full max-w-md rounded-3xl bg-white p-8 text-center shadow-xl">
         <p className="text-sm text-emerald-700">ברוכים הבאים</p>
         <h1 className="mt-2 text-3xl font-bold text-emerald-900">
-          קטלוג כוונת הלב
+          bri-catalog
         </h1>
         <p className="mt-3 text-gray-600">
           קטלוג דיגיטלי להזמנות מהירות ללקוחות עסקיים

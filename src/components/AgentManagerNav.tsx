@@ -23,7 +23,7 @@ export default function AgentManagerNav() {
       <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-4">
         <div>
           <p className="text-xs text-gray-500">מנהל סוכנים</p>
-          <h1 className="text-xl font-bold text-indigo-800">קטלוג כוונת הלב</h1>
+          <h1 className="text-xl font-bold text-indigo-800">bri-catalog</h1>
         </div>
         <button
           onClick={logout}

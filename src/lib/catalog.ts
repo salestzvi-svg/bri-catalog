@@ -152,7 +152,7 @@ export async function getCatalogProducts(): Promise<CatalogProduct[]> {
 
 export const getCachedCatalogProducts = unstable_cache(
   async () => getCatalogProducts(),
-  ["catalog-products-v7"],
+  ["catalog-products-v8"],
   { revalidate: 300, tags: [CATALOG_CACHE_TAG] },
 );
 

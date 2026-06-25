@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CartItem, CatalogProduct, Category, CategoryLabel, StoreOrderItem } from "@/lib/types";
 import { compareProducts } from "@/lib/product-sort";
-import { filterProductsBySearch } from "@/lib/product-variants";
+import { filterCategoryProductsBySearch } from "@/lib/product-variants";
 import {
   buildEmailOrderUrl,
   buildWhatsAppOrderUrl,
@@ -377,13 +377,17 @@ export default function CatalogView({
     if (!selectedCategory) return [];
     let list = selectedCategory.products;
     if (search.trim()) {
-      list = filterProductsBySearch(list, search);
+      list = filterCategoryProductsBySearch(
+        products,
+        selectedCategory.products,
+        search,
+      );
     }
     if (selectedLabelId) {
       list = list.filter((p) => p.labelIds.includes(selectedLabelId));
     }
     return list;
-  }, [selectedCategory, search, selectedLabelId]);
+  }, [selectedCategory, search, selectedLabelId, products]);
 
   const skuToProduct = useMemo(() => {
     const map = new Map<string, CatalogProduct>();

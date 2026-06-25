@@ -4,6 +4,7 @@ import CustomerLinkCard from "@/components/CustomerLinkCard";
 import { STAGING_CATEGORY_NAME } from "@/lib/staging-category";
 import { isManagedCategory } from "@/lib/storefront-categories";
 import { compareProducts } from "@/lib/product-sort";
+import { findProductForFamilyLink } from "@/lib/product-variants";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 interface Category {
@@ -1258,22 +1259,10 @@ function ProductCard({
   const saveSortOrderRef = useRef(onSaveSortOrder);
   const familyCount = product.variantGroupId ? variantSiblings.length + 1 : 0;
 
-  const linkPreview = useMemo(() => {
-    const query = linkInput.trim().toLowerCase();
-    if (!query) return null;
-
-    const others = linkCatalogProducts.filter((p) => p.itemId !== product.itemId);
-    const exactSku = others.find((p) => p.sku.toLowerCase() === query);
-    if (exactSku) return exactSku;
-
-    const skuStarts = others.find((p) => p.sku.toLowerCase().startsWith(query));
-    if (skuStarts) return skuStarts;
-
-    const skuIncludes = others.find((p) => p.sku.toLowerCase().includes(query));
-    if (skuIncludes) return skuIncludes;
-
-    return others.find((p) => p.name.toLowerCase().includes(query)) ?? null;
-  }, [linkInput, linkCatalogProducts, product.itemId]);
+  const linkPreview = useMemo(
+    () => findProductForFamilyLink(linkCatalogProducts, product.itemId, linkInput),
+    [linkInput, linkCatalogProducts, product.itemId],
+  );
 
   const familyMembers = useMemo(() => {
     if (!product.variantGroupId) return [];

@@ -442,6 +442,14 @@ export default function CatalogView({
     }, 0);
   }, [cartItems, skuToProduct, discountPercent]);
 
+  const cartSubtotalBeforeDiscount = useMemo(() => {
+    return cartItems.reduce((sum, item) => {
+      const product = skuToProduct.get(item.sku);
+      if (!product?.price || product.price <= 0) return sum;
+      return sum + product.price * item.quantity;
+    }, 0);
+  }, [cartItems, skuToProduct]);
+
   const deliveryFee = useMemo(
     () => calculateDeliveryFee(cartSubtotal),
     [cartSubtotal],
@@ -588,6 +596,11 @@ export default function CatalogView({
             <h1 className="truncate text-base font-bold text-emerald-800">
               {storeName}
             </h1>
+            {discountPercent > 0 && (
+              <span className="mt-0.5 inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900">
+                {t.yourDiscount}: {discountPercent}%
+              </span>
+            )}
             {browsingProducts && (
               <p className="truncate text-sm font-medium text-gray-700">
                 {isSearching
@@ -920,12 +933,28 @@ export default function CatalogView({
                 {orderTotal > 0 && (
                   <div className="shrink-0 border-t border-gray-200 bg-white px-4 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)]">
                     <div className="space-y-2 rounded-xl bg-emerald-50 px-4 py-3">
-                      {deliveryFee > 0 && (
-                        <>
+                      {discountPercent > 0 &&
+                        cartSubtotalBeforeDiscount > cartSubtotal && (
                           <div className="flex items-center justify-between text-sm text-gray-700">
                             <span>{t.productsSubtotal}</span>
-                            <span>{formatPrice(cartSubtotal, locale)}</span>
+                            <div className="text-end">
+                              <p className="text-xs text-gray-400 line-through">
+                                {formatPrice(cartSubtotalBeforeDiscount, locale)}
+                              </p>
+                              <p className="font-semibold text-emerald-800">
+                                {formatPrice(cartSubtotal, locale)}
+                              </p>
+                            </div>
                           </div>
+                        )}
+                      {deliveryFee > 0 && (
+                        <>
+                          {!(discountPercent > 0 && cartSubtotalBeforeDiscount > cartSubtotal) && (
+                            <div className="flex items-center justify-between text-sm text-gray-700">
+                              <span>{t.productsSubtotal}</span>
+                              <span>{formatPrice(cartSubtotal, locale)}</span>
+                            </div>
+                          )}
                           <div className="flex items-center justify-between text-sm text-gray-700">
                             <span>{t.deliveryFee}</span>
                             <span>{formatPrice(deliveryFee, locale)}</span>

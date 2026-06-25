@@ -1,4 +1,5 @@
 import type { CatalogProduct } from "./types";
+import { parseSearchAliases } from "./search-aliases";
 
 export interface VariantSearchProduct {
   itemId: number;
@@ -151,7 +152,7 @@ export function enrichCatalogProductsWithVariants(
 }
 
 export function findProductForFamilyLink<
-  T extends { itemId: number; sku: string; name: string },
+  T extends { itemId: number; sku: string; name: string; searchAliases?: string | null },
 >(products: T[], currentItemId: number, query: string): T | null {
   const trimmed = query.trim();
   if (!trimmed) return null;
@@ -173,5 +174,12 @@ export function findProductForFamilyLink<
   );
   if (skuIncludes) return skuIncludes;
 
-  return others.find((p) => p.name.toLowerCase().includes(q)) ?? null;
+  return (
+    others.find((p) => {
+      if (p.name.toLowerCase().includes(q)) return true;
+      return parseSearchAliases(p.searchAliases).some((alias) =>
+        alias.toLowerCase().includes(q),
+      );
+    }) ?? null
+  );
 }

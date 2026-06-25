@@ -5,6 +5,7 @@ import { STAGING_CATEGORY_NAME } from "@/lib/staging-category";
 import { isManagedCategory } from "@/lib/storefront-categories";
 import { compareProducts } from "@/lib/product-sort";
 import { findProductForFamilyLink } from "@/lib/product-variants";
+import { parseSearchAliases } from "@/lib/search-aliases";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 interface Category {
@@ -38,6 +39,7 @@ interface AdminProduct {
   sortOrder?: number;
   labelIds?: string[];
   variantGroupId?: string | null;
+  searchAliases?: string;
 }
 
 function formatAdminPrice(price: number) {
@@ -404,6 +406,38 @@ export default function AdminCatalogPage() {
     });
   }
 
+  async function saveProductSearchAliases(itemId: number, searchAliases: string) {
+    const normalized = searchAliases.trim();
+    const current = products.find((p) => p.itemId === itemId);
+    if ((current?.searchAliases ?? "").trim() === normalized) {
+      return;
+    }
+
+    setError("");
+
+    const response = await fetch("/api/admin/products", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        itemId,
+        searchAliases: normalized || null,
+      }),
+    });
+    const data = await response.json();
+
+    if (response.ok) {
+      setProducts((prev) =>
+        prev.map((product) =>
+          product.itemId === itemId
+            ? { ...product, searchAliases: normalized }
+            : product,
+        ),
+      );
+    } else {
+      setError(data.error || "שגיאה בשמירת שמות חיפוש");
+    }
+  }
+
   async function saveProductSortOrder(itemId: number, sortInput: string) {
     const trimmed = sortInput.trim();
     const sortOrder = trimmed === "" ? 0 : Number.parseInt(trimmed, 10);
@@ -655,7 +689,10 @@ export default function AdminCatalogPage() {
       const matchesSearch =
         !term ||
         product.name.toLowerCase().includes(term) ||
-        product.sku.toLowerCase().includes(term);
+        product.sku.toLowerCase().includes(term) ||
+        parseSearchAliases(product.searchAliases).some((alias) =>
+          alias.toLowerCase().includes(term),
+        );
 
       const matchesCategory =
         categoryFilter === "all" || product.categoryId === categoryFilter;
@@ -942,6 +979,9 @@ export default function AdminCatalogPage() {
                     linkVariantFamily(product.itemId, targetItemId)
                   }
                   onUnlinkVariant={() => unlinkVariantFamily(product.itemId)}
+                  onSaveSearchAliases={(value) =>
+                    saveProductSearchAliases(product.itemId, value)
+                  }
                 />
               ))}
             </div>
@@ -1230,6 +1270,7 @@ function ProductCard({
   linkCatalogProducts,
   onLinkVariant,
   onUnlinkVariant,
+  onSaveSearchAliases,
 }: {
   product: AdminProduct;
   categories: Category[];
@@ -1247,6 +1288,7 @@ function ProductCard({
   linkCatalogProducts: AdminProduct[];
   onLinkVariant: (targetItemId: number) => void;
   onUnlinkVariant: () => void;
+  onSaveSearchAliases: (value: string) => void;
 }) {
   const fileInputId = `product-image-${product.itemId}`;
   const [priceInput, setPriceInput] = useState(
@@ -1256,7 +1298,11 @@ function ProductCard({
     product.sortOrder && product.sortOrder > 0 ? String(product.sortOrder) : "",
   );
   const [linkInput, setLinkInput] = useState("");
+  const [searchAliasesInput, setSearchAliasesInput] = useState(
+    product.searchAliases ?? "",
+  );
   const saveSortOrderRef = useRef(onSaveSortOrder);
+  const saveSearchAliasesRef = useRef(onSaveSearchAliases);
   const familyCount = product.variantGroupId ? variantSiblings.length + 1 : 0;
 
   const linkPreview = useMemo(
@@ -1272,6 +1318,26 @@ function ProductCard({
   useEffect(() => {
     saveSortOrderRef.current = onSaveSortOrder;
   }, [onSaveSortOrder]);
+
+  useEffect(() => {
+    saveSearchAliasesRef.current = onSaveSearchAliases;
+  }, [onSaveSearchAliases]);
+
+  useEffect(() => {
+    setSearchAliasesInput(product.searchAliases ?? "");
+  }, [product.itemId]);
+
+  useEffect(() => {
+    const serverValue = (product.searchAliases ?? "").trim();
+    const draft = searchAliasesInput.trim();
+    if (draft === serverValue) return;
+
+    const timer = window.setTimeout(() => {
+      saveSearchAliasesRef.current(searchAliasesInput);
+    }, 600);
+
+    return () => window.clearTimeout(timer);
+  }, [searchAliasesInput, product.searchAliases, product.itemId]);
 
   useEffect(() => {
     setPriceInput(product.price > 0 ? String(product.price) : "");
@@ -1344,6 +1410,26 @@ function ProductCard({
         </span>
       )}
       <p className="mt-1 text-xs text-gray-500">מק&quot;ט: {product.sku}</p>
+
+      <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-2">
+        <p className="text-xs font-medium text-amber-900">שמות לחיפוש (נסתר)</p>
+        <p className="text-[10px] text-amber-800">
+          לא מוצג ללקוח — רק לחיפוש. שורה לכל שם
+        </p>
+        <textarea
+          value={searchAliasesInput}
+          disabled={isSaving}
+          onChange={(e) => setSearchAliasesInput(e.target.value)}
+          placeholder={'למשל:\nעלים לתרופה'}
+          rows={2}
+          className="mt-1 w-full resize-y rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs leading-snug"
+        />
+        {parseSearchAliases(searchAliasesInput).length > 0 && (
+          <p className="mt-1 text-[10px] text-amber-900">
+            נשמר אוטומטית · {parseSearchAliases(searchAliasesInput).length} שמות
+          </p>
+        )}
+      </div>
 
       {showCategoryTools && (
         <div className="mt-2 rounded-xl border border-blue-200 bg-blue-50 p-2">

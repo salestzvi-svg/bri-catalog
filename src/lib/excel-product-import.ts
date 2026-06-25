@@ -170,7 +170,7 @@ async function upsertProductOverride(
 ): Promise<{ error: string } | { success: true }> {
   const { data: existing } = await supabase
     .from("product_overrides")
-    .select("custom_name, custom_price, custom_image, is_hidden")
+    .select("custom_name, custom_price, custom_image, is_hidden, search_aliases")
     .eq("rivhit_item_id", itemId)
     .maybeSingle();
 
@@ -189,6 +189,7 @@ async function upsertProductOverride(
         ? fields.customImage || null
         : (existing?.custom_image ?? null),
     is_hidden: existing?.is_hidden ?? false,
+    search_aliases: existing?.search_aliases ?? null,
     updated_at: new Date().toISOString(),
   });
 

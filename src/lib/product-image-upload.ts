@@ -80,7 +80,7 @@ export async function saveProductCustomImage(
 ): Promise<{ error: string } | { success: true }> {
   const { data: existingOverride } = await supabase
     .from("product_overrides")
-    .select("custom_name, custom_price, is_hidden")
+    .select("custom_name, custom_price, is_hidden, search_aliases")
     .eq("rivhit_item_id", itemId)
     .maybeSingle();
 
@@ -90,6 +90,7 @@ export async function saveProductCustomImage(
     custom_price: existingOverride?.custom_price ?? null,
     custom_image: imageUrl,
     is_hidden: existingOverride?.is_hidden ?? false,
+    search_aliases: existingOverride?.search_aliases ?? null,
     updated_at: new Date().toISOString(),
   });
 

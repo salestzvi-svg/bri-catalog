@@ -194,6 +194,7 @@ export async function GET(request: Request) {
         sortOrder: mapping?.sort_order ?? 0,
         labelIds: labelAssignments.get(item.item_id) ?? [],
         variantGroupId: mapping?.variant_group_id ?? null,
+        searchAliases: override?.search_aliases ?? "",
       };
     });
 
@@ -230,6 +231,7 @@ export async function PUT(request: Request) {
       labelIds,
       linkToItemId,
       unlinkVariant,
+      searchAliases,
     } = body;
 
     if (!itemId) {
@@ -392,7 +394,7 @@ export async function PUT(request: Request) {
 
     const { data: existingOverride } = await supabase
       .from("product_overrides")
-      .select("custom_name, custom_price, custom_image, is_hidden")
+      .select("custom_name, custom_price, custom_image, is_hidden, search_aliases")
       .eq("rivhit_item_id", itemId)
       .maybeSingle();
 
@@ -415,15 +417,29 @@ export async function PUT(request: Request) {
         isHidden !== undefined
           ? Boolean(isHidden)
           : (existingOverride?.is_hidden ?? false),
+      search_aliases:
+        searchAliases !== undefined
+          ? String(searchAliases).trim() || null
+          : (existingOverride?.search_aliases ?? null),
       updated_at: new Date().toISOString(),
     };
 
-    const { error } = await supabase
-      .from("product_overrides")
-      .upsert(overridePayload);
+    const needsOverrideWrite =
+      customName !== undefined ||
+      customPrice !== undefined ||
+      customImage !== undefined ||
+      clearCustomImage ||
+      isHidden !== undefined ||
+      searchAliases !== undefined;
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    if (needsOverrideWrite) {
+      const { error } = await supabase
+        .from("product_overrides")
+        .upsert(overridePayload);
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
     }
 
     revalidateTag(CATALOG_CACHE_TAG, "max");

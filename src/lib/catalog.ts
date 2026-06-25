@@ -7,6 +7,7 @@ import { buildWhatsAppOrderUrl as buildWaUrl, getWhatsAppNumber } from "./whatsa
 import { isStorefrontCategory } from "./storefront-categories";
 import { compareProducts } from "./product-sort";
 import { enrichCatalogProductsWithVariants } from "./product-variants";
+import { applySearchAliasesToCatalog, parseSearchAliases } from "./search-aliases";
 
 export const CATALOG_CACHE_TAG = "catalog-products";
 
@@ -140,19 +141,28 @@ export async function getCatalogProducts(): Promise<CatalogProduct[]> {
 
   const enriched = enrichCatalogProductsWithVariants(products);
 
-  enriched.sort((a, b) => {
+  const aliasByItemId = new Map<number, string[]>();
+  for (const override of overrides.values()) {
+    const aliases = parseSearchAliases(override.search_aliases);
+    if (aliases.length > 0) {
+      aliasByItemId.set(override.rivhit_item_id, aliases);
+    }
+  }
+  const withSearchNames = applySearchAliasesToCatalog(enriched, aliasByItemId);
+
+  withSearchNames.sort((a, b) => {
     if (a.categorySortOrder !== b.categorySortOrder) {
       return a.categorySortOrder - b.categorySortOrder;
     }
     return compareProducts(a, b);
   });
 
-  return enriched;
+  return withSearchNames;
 }
 
 export const getCachedCatalogProducts = unstable_cache(
   async () => getCatalogProducts(),
-  ["catalog-products-v8"],
+  ["catalog-products-v9"],
   { revalidate: 300, tags: [CATALOG_CACHE_TAG] },
 );
 

@@ -60,6 +60,7 @@ create table if not exists product_overrides (
   custom_price numeric(10, 2),
   custom_image text,
   is_hidden boolean not null default false,
+  search_aliases text,
   updated_at timestamptz not null default now()
 );
 

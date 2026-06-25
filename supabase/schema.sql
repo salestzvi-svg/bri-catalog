@@ -11,6 +11,8 @@ create table if not exists stores (
   password_hash text not null,
   signup_channel text not null default 'default' check (signup_channel in ('default', 'b')),
   last_login_channel text not null default 'default' check (last_login_channel in ('default', 'b')),
+  discount_percent numeric(5, 2) not null default 0
+    check (discount_percent >= 0 and discount_percent <= 100),
   created_at timestamptz not null default now(),
   unique (store_name, username)
 );
@@ -30,7 +32,25 @@ create table if not exists product_mappings (
   rivhit_item_id int not null,
   category_id uuid not null references categories(id) on delete cascade,
   sort_order int not null default 0,
+  variant_group_id uuid,
   unique (rivhit_item_id)
+);
+
+-- תוויות בתוך קטגוריה (סינון ללקוח)
+create table if not exists category_labels (
+  id uuid primary key default gen_random_uuid(),
+  category_id uuid not null references categories(id) on delete cascade,
+  name text not null,
+  sort_order int not null default 0,
+  created_at timestamptz not null default now(),
+  unique (category_id, name)
+);
+
+-- שיוך מוצר לתוויות בקטגוריה
+create table if not exists product_label_assignments (
+  rivhit_item_id int not null,
+  label_id uuid not null references category_labels(id) on delete cascade,
+  primary key (rivhit_item_id, label_id)
 );
 
 -- עריכות מנהל על מוצרים מ-Rivhit
@@ -123,9 +143,71 @@ insert into super_admin_settings (id, password_hash)
 values (1, '$2b$10$24Ks4/brmWsSvUulFXxJ5eiM0wcbXwYytWAJv/G8.1R8WiYFTpwO.')
 on conflict (id) do nothing;
 
+-- אחסון תמונות מוצרים (העלאה ממנהל / ייבוא אקסל)
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'product-images',
+  'product-images',
+  true,
+  5242880,
+  array['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+)
+on conflict (id) do update set
+  public = excluded.public,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'storage'
+      and tablename = 'objects'
+      and policyname = 'Product images public read'
+  ) then
+    create policy "Product images public read"
+    on storage.objects for select
+    to public
+    using (bucket_id = 'product-images');
+  end if;
+end $$;
+
+-- אחסון תמונות מודעות ללקוחות
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'announcements',
+  'announcements',
+  true,
+  5242880,
+  array['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+)
+on conflict (id) do update set
+  public = excluded.public,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'storage'
+      and tablename = 'objects'
+      and policyname = 'Announcement images public read'
+  ) then
+    create policy "Announcement images public read"
+    on storage.objects for select
+    to public
+    using (bucket_id = 'announcements');
+  end if;
+end $$;
+
 -- אינדקסים
 create index if not exists idx_product_mappings_category on product_mappings(category_id);
 create index if not exists idx_product_mappings_item on product_mappings(rivhit_item_id);
+create index if not exists idx_product_mappings_category_sort on product_mappings(category_id, sort_order);
+create index if not exists idx_product_mappings_variant_group on product_mappings(variant_group_id) where variant_group_id is not null;
+create index if not exists idx_category_labels_category on category_labels(category_id);
+create index if not exists idx_product_label_assignments_item on product_label_assignments(rivhit_item_id);
 create index if not exists idx_categories_sort on categories(sort_order);
 create index if not exists idx_store_orders_store_id on store_orders(store_id);
 create index if not exists idx_store_orders_created_at on store_orders(created_at desc);

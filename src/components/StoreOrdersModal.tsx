@@ -1,25 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { StoreOrder, WhatsAppChannel } from "@/lib/types";
+import type { StoreOrder } from "@/lib/types";
 
 function formatPrice(price: number) {
   return `₪${price.toLocaleString("he-IL", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
-}
-
-function ChannelLabel({ channel }: { channel: WhatsAppChannel }) {
-  if (channel === "b") {
-    return (
-      <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-800">
-        קישור 2
-      </span>
-    );
-  }
-  return (
-    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">
-      קישור 1
-    </span>
-  );
 }
 
 export default function StoreOrdersModal({
@@ -125,12 +110,9 @@ export default function StoreOrdersModal({
                   key={order.id}
                   className="rounded-xl border border-gray-200 p-4"
                 >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-sm font-semibold text-gray-900">
-                      {new Date(order.created_at).toLocaleString("he-IL")}
-                    </p>
-                    <ChannelLabel channel={order.whatsapp_channel} />
-                  </div>
+                  <p className="text-sm font-semibold text-gray-900">
+                    {new Date(order.created_at).toLocaleString("he-IL")}
+                  </p>
 
                   <ul className="mt-3 space-y-2 text-sm">
                     {order.items.map((item) => (

@@ -2,6 +2,8 @@
 
 import CustomerLinkCard from "@/components/CustomerLinkCard";
 import { STAGING_CATEGORY_NAME } from "@/lib/staging-category";
+import { isManagedCategory } from "@/lib/storefront-categories";
+import { compareProducts } from "@/lib/product-sort";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 interface Category {
@@ -9,6 +11,13 @@ interface Category {
   name: string;
   sort_order: number;
   is_staging?: boolean;
+}
+
+interface CategoryLabel {
+  id: string;
+  category_id: string;
+  name: string;
+  sort_order: number;
 }
 
 interface AdminProduct {
@@ -25,6 +34,9 @@ interface AdminProduct {
   categoryId: string | null;
   categoryName: string | null;
   isStaging?: boolean;
+  sortOrder?: number;
+  labelIds?: string[];
+  variantGroupId?: string | null;
 }
 
 function formatAdminPrice(price: number) {
@@ -49,7 +61,27 @@ export default function AdminCatalogPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [savingIds, setSavingIds] = useState<Set<number>>(new Set());
+  const [categoryLabels, setCategoryLabels] = useState<CategoryLabel[]>([]);
+  const [newLabelName, setNewLabelName] = useState("");
   const initialStagingFilter = useRef(false);
+
+  const managedCategories = useMemo(
+    () => categories.filter((c) => isManagedCategory(c)),
+    [categories],
+  );
+
+  const activeManagedCategoryId = useMemo(() => {
+    if (
+      categoryFilter === "all" ||
+      !categoryFilter ||
+      categoryFilter === stagingCategoryId
+    ) {
+      return null;
+    }
+    return managedCategories.some((c) => c.id === categoryFilter)
+      ? categoryFilter
+      : null;
+  }, [categoryFilter, stagingCategoryId, managedCategories]);
 
   async function loadCategories() {
     const response = await fetch("/api/admin/categories");
@@ -113,6 +145,28 @@ export default function AdminCatalogPage() {
   useEffect(() => {
     setPage(1);
   }, [filter, categoryFilter]);
+
+  useEffect(() => {
+    if (!activeManagedCategoryId) {
+      setCategoryLabels([]);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      const response = await fetch(
+        `/api/admin/categories/${activeManagedCategoryId}/labels`,
+      );
+      const data = await response.json();
+      if (!cancelled && response.ok) {
+        setCategoryLabels(data.labels ?? []);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeManagedCategoryId]);
 
   async function addCategory(event: React.FormEvent) {
     event.preventDefault();
@@ -192,6 +246,234 @@ export default function AdminCatalogPage() {
     setMessage("סדר הקטגוריות עודכן");
   }
 
+  async function addCategoryLabel(event: React.FormEvent) {
+    event.preventDefault();
+    if (!activeManagedCategoryId || !newLabelName.trim()) return;
+
+    setError("");
+    const response = await fetch(
+      `/api/admin/categories/${activeManagedCategoryId}/labels`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newLabelName.trim() }),
+      },
+    );
+    const data = await response.json();
+    if (!response.ok) {
+      setError(data.error || "שגיאה בהוספת תווית");
+      return;
+    }
+
+    setNewLabelName("");
+    setCategoryLabels((prev) => [...prev, data.label]);
+    setMessage(`התווית "${data.label.name}" נוספה`);
+  }
+
+  async function renameCategoryLabel(id: string, name: string) {
+    if (!activeManagedCategoryId || !name.trim()) return;
+
+    const response = await fetch(
+      `/api/admin/categories/${activeManagedCategoryId}/labels`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, name: name.trim() }),
+      },
+    );
+    const data = await response.json();
+    if (!response.ok) {
+      setError(data.error || "שגיאה בעדכון תווית");
+      return;
+    }
+
+    setCategoryLabels((prev) =>
+      prev.map((label) => (label.id === id ? data.label : label)),
+    );
+  }
+
+  async function deleteCategoryLabel(id: string, name: string) {
+    if (!activeManagedCategoryId) return;
+    if (!confirm(`למחוק את התווית "${name}"?`)) return;
+
+    const response = await fetch(
+      `/api/admin/categories/${activeManagedCategoryId}/labels?id=${id}`,
+      { method: "DELETE" },
+    );
+    if (!response.ok) {
+      const data = await response.json();
+      setError(data.error || "שגיאה במחיקת תווית");
+      return;
+    }
+
+    setCategoryLabels((prev) => prev.filter((label) => label.id !== id));
+    setProducts((prev) =>
+      prev.map((product) => ({
+        ...product,
+        labelIds: (product.labelIds ?? []).filter((labelId) => labelId !== id),
+      })),
+    );
+    setMessage(`התווית "${name}" נמחקה`);
+  }
+
+  async function moveCategoryLabel(id: string, direction: "up" | "down") {
+    if (!activeManagedCategoryId) return;
+
+    const response = await fetch(
+      `/api/admin/categories/${activeManagedCategoryId}/labels`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, move: direction }),
+      },
+    );
+    if (!response.ok) {
+      const data = await response.json();
+      setError(data.error || "שגיאה בסידור תוויות");
+      return;
+    }
+
+    const labelsResponse = await fetch(
+      `/api/admin/categories/${activeManagedCategoryId}/labels`,
+    );
+    const data = await labelsResponse.json();
+    if (labelsResponse.ok) {
+      setCategoryLabels(data.labels ?? []);
+    }
+  }
+
+  async function linkVariantFamily(itemId: number, targetQuery: string) {
+    const query = targetQuery.trim().toLowerCase();
+    if (!query) {
+      setError("הזן מק״ט או שם מוצר לחיבור");
+      return;
+    }
+
+    const target = products.find(
+      (product) =>
+        product.itemId !== itemId &&
+        (product.sku.toLowerCase() === query ||
+          product.sku.toLowerCase().includes(query) ||
+          product.name.toLowerCase().includes(query)),
+    );
+
+    if (!target) {
+      setError("מוצר לחיבור לא נמצא");
+      return;
+    }
+
+    setSavingIds((prev) => new Set(prev).add(itemId));
+    setError("");
+
+    const response = await fetch("/api/admin/products", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ itemId, linkToItemId: target.itemId }),
+    });
+    const data = await response.json();
+
+    if (response.ok) {
+      await loadProducts();
+      setMessage(`חובר למשפחה עם: ${target.name}`);
+    } else {
+      setError(data.error || "שגיאה בחיבור משפחה");
+    }
+
+    setSavingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(itemId);
+      return next;
+    });
+  }
+
+  async function unlinkVariantFamily(itemId: number) {
+    setSavingIds((prev) => new Set(prev).add(itemId));
+    setError("");
+
+    const response = await fetch("/api/admin/products", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ itemId, unlinkVariant: true }),
+    });
+    const data = await response.json();
+
+    if (response.ok) {
+      await loadProducts();
+      setMessage("הוסר ממשפחת השפות");
+    } else {
+      setError(data.error || "שגיאה בהסרה ממשפחה");
+    }
+
+    setSavingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(itemId);
+      return next;
+    });
+  }
+
+  async function saveProductSortOrder(itemId: number, sortInput: string) {
+    const trimmed = sortInput.trim();
+    const sortOrder = trimmed === "" ? 0 : Number.parseInt(trimmed, 10);
+    if (!Number.isFinite(sortOrder) || sortOrder < 0) {
+      return;
+    }
+    if (trimmed !== "" && sortOrder === 0) {
+      return;
+    }
+
+    const current = products.find((p) => p.itemId === itemId);
+    if ((current?.sortOrder ?? 0) === sortOrder) {
+      return;
+    }
+
+    setError("");
+
+    const response = await fetch("/api/admin/products", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ itemId, sortOrder }),
+    });
+    const data = await response.json();
+
+    if (response.ok) {
+      setProducts((prev) =>
+        prev.map((product) =>
+          product.itemId === itemId ? { ...product, sortOrder } : product,
+        ),
+      );
+    } else {
+      setError(data.error || "שגיאה בעדכון סידור");
+    }
+  }
+
+  async function saveProductLabels(itemId: number, labelIds: string[]) {
+    setSavingIds((prev) => new Set(prev).add(itemId));
+    setError("");
+
+    const response = await fetch("/api/admin/products", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ itemId, labelIds }),
+    });
+    const data = await response.json();
+
+    if (response.ok) {
+      setProducts((prev) =>
+        prev.map((product) =>
+          product.itemId === itemId ? { ...product, labelIds } : product,
+        ),
+      );
+    } else {
+      setError(data.error || "שגיאה בעדכון תוויות");
+    }
+
+    setSavingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(itemId);
+      return next;
+    });
+  }
+
   async function saveCategory(itemId: number, categoryId: string) {
     setSavingIds((prev) => new Set(prev).add(itemId));
     setError("");
@@ -209,6 +491,8 @@ export default function AdminCatalogPage() {
 
     if (response.ok) {
       const category = categories.find((c) => c.id === categoryId);
+      const previous = products.find((p) => p.itemId === itemId);
+      const categoryChanged = previous?.categoryId !== (categoryId || stagingCategoryId);
 
       setProducts((prev) =>
         prev.map((product) =>
@@ -218,6 +502,7 @@ export default function AdminCatalogPage() {
                 categoryId: categoryId || stagingCategoryId,
                 categoryName: category?.name ?? STAGING_CATEGORY_NAME,
                 isStaging: category?.is_staging ?? !categoryId,
+                ...(categoryChanged ? { sortOrder: 0, labelIds: [] } : {}),
               }
             : product,
         ),
@@ -372,7 +657,7 @@ export default function AdminCatalogPage() {
   }
 
   const filteredProducts = useMemo(() => {
-    return products.filter((product) => {
+    const list = products.filter((product) => {
       const term = filter.trim().toLowerCase();
       const matchesSearch =
         !term ||
@@ -384,7 +669,40 @@ export default function AdminCatalogPage() {
 
       return matchesSearch && matchesCategory;
     });
-  }, [products, filter, categoryFilter]);
+
+    if (activeManagedCategoryId) {
+      return [...list].sort((a, b) =>
+        compareProducts(
+          { sortOrder: a.sortOrder ?? 0, sku: a.sku },
+          { sortOrder: b.sortOrder ?? 0, sku: b.sku },
+        ),
+      );
+    }
+
+    return list;
+  }, [products, filter, categoryFilter, activeManagedCategoryId]);
+
+  const variantSiblingsByItemId = useMemo(() => {
+    const groups = new Map<string, AdminProduct[]>();
+    for (const product of products) {
+      if (!product.variantGroupId) continue;
+      const list = groups.get(product.variantGroupId) ?? [];
+      list.push(product);
+      groups.set(product.variantGroupId, list);
+    }
+
+    const map = new Map<number, AdminProduct[]>();
+    for (const product of products) {
+      if (!product.variantGroupId) continue;
+      map.set(
+        product.itemId,
+        (groups.get(product.variantGroupId) ?? []).filter(
+          (p) => p.itemId !== product.itemId,
+        ),
+      );
+    }
+    return map;
+  }, [products]);
 
   const totalPages = Math.max(1, Math.ceil(filteredProducts.length / PAGE_SIZE));
   const pagedProducts = filteredProducts.slice(
@@ -447,12 +765,12 @@ export default function AdminCatalogPage() {
             <p className="text-sm text-gray-600">
               סדר הקטגוריות (כפי שיופיע ללקוח) — השתמש בחיצים:
             </p>
-            {categories.map((category, index) => (
+            {managedCategories.map((category, index) => (
               <CategoryChip
                 key={category.id}
                 category={category}
                 isFirst={index === 0}
-                isLast={index === categories.length - 1}
+                isLast={index === managedCategories.length - 1}
                 onRename={renameCategory}
                 onDelete={deleteCategory}
                 onMoveUp={() => moveCategory(category.id, "up")}
@@ -474,7 +792,7 @@ export default function AdminCatalogPage() {
             className="mt-3 w-full rounded-xl border border-gray-300 bg-white px-4 py-3 sm:max-w-sm"
           >
             <option value="">בחר קטגוריה לשיוך...</option>
-            {categories.map((category) => (
+            {managedCategories.map((category) => (
               <option key={category.id} value={category.id}>
                 {category.name}
               </option>
@@ -510,9 +828,7 @@ export default function AdminCatalogPage() {
             onClick={() => setCategoryFilter("all")}
             label={`הכל (${products.length})`}
           />
-          {categories
-            .filter((c) => !c.is_staging)
-            .map((category) => {
+          {managedCategories.map((category) => {
             const count = products.filter(
               (p) => p.categoryId === category.id,
             ).length;
@@ -526,6 +842,54 @@ export default function AdminCatalogPage() {
             );
           })}
         </div>
+
+        {activeManagedCategoryId && (
+          <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 p-4">
+            <p className="font-semibold text-blue-900">
+              תוויות בקטגוריה — הלקוח יוכל לסנן לפיהן
+            </p>
+            <form
+              onSubmit={addCategoryLabel}
+              className="mt-3 flex flex-col gap-2 sm:flex-row"
+            >
+              <input
+                value={newLabelName}
+                onChange={(e) => setNewLabelName(e.target.value)}
+                placeholder="שם תווית חדשה, למשל: גדול"
+                className="flex-1 rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm"
+              />
+              <button className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white">
+                הוסף תווית
+              </button>
+            </form>
+            {categoryLabels.length > 0 ? (
+              <div className="mt-3 space-y-2">
+                {categoryLabels.map((label, index) => (
+                  <LabelChip
+                    key={label.id}
+                    label={label}
+                    isFirst={index === 0}
+                    isLast={index === categoryLabels.length - 1}
+                    onRename={renameCategoryLabel}
+                    onDelete={deleteCategoryLabel}
+                    onMoveUp={() => moveCategoryLabel(label.id, "up")}
+                    onMoveDown={() => moveCategoryLabel(label.id, "down")}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="mt-2 text-sm text-blue-800">
+                עדיין אין תוויות — הלקוח יראה את כל המוצרים בקטגוריה.
+              </p>
+            )}
+          </div>
+        )}
+
+        {activeManagedCategoryId && (
+          <p className="mt-4 text-sm text-gray-600">
+            מס סידור בקטגוריה: 1 = ראשון, 2 = שני… השאר ריק (0). מוצרים בלי מספר יופיעו אחרי הממוספרים, לפי מק״ט.
+          </p>
+        )}
 
         {error && (
           <p className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -556,9 +920,11 @@ export default function AdminCatalogPage() {
                 <ProductCard
                   key={product.itemId}
                   product={product}
-                  categories={categories.filter((c) => !c.is_staging)}
+                  categories={managedCategories}
                   assignCategoryId={assignCategoryId}
                   isSaving={savingIds.has(product.itemId)}
+                  showCategoryTools={Boolean(activeManagedCategoryId)}
+                  categoryLabels={categoryLabels}
                   onAssign={(categoryId) =>
                     saveCategory(product.itemId, categoryId)
                   }
@@ -569,6 +935,19 @@ export default function AdminCatalogPage() {
                   onSavePrice={(priceInput) =>
                     saveProductPrice(product.itemId, priceInput)
                   }
+                  onSaveSortOrder={(sortInput) =>
+                    saveProductSortOrder(product.itemId, sortInput)
+                  }
+                  onSaveLabels={(labelIds) =>
+                    saveProductLabels(product.itemId, labelIds)
+                  }
+                  variantSiblings={
+                    variantSiblingsByItemId.get(product.itemId) ?? []
+                  }
+                  onLinkVariant={(targetQuery) =>
+                    linkVariantFamily(product.itemId, targetQuery)
+                  }
+                  onUnlinkVariant={() => unlinkVariantFamily(product.itemId)}
                 />
               ))}
             </div>
@@ -740,33 +1119,188 @@ function FilterPill({
   );
 }
 
+function LabelChip({
+  label,
+  isFirst,
+  isLast,
+  onRename,
+  onDelete,
+  onMoveUp,
+  onMoveDown,
+}: {
+  label: CategoryLabel;
+  isFirst: boolean;
+  isLast: boolean;
+  onRename: (id: string, name: string) => void;
+  onDelete: (id: string, name: string) => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(label.name);
+
+  useEffect(() => {
+    setName(label.name);
+  }, [label.name]);
+
+  if (editing) {
+    return (
+      <span className="flex items-center gap-2 rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="min-w-0 flex-1 rounded border border-gray-300 px-2 py-1 text-sm"
+          autoFocus
+        />
+        <button
+          type="button"
+          onClick={() => {
+            if (name.trim()) {
+              onRename(label.id, name);
+              setEditing(false);
+            }
+          }}
+          className="font-semibold text-blue-700"
+        >
+          שמור
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setName(label.name);
+            setEditing(false);
+          }}
+          className="text-gray-500"
+        >
+          ביטול
+        </button>
+      </span>
+    );
+  }
+
+  return (
+    <span className="flex items-center justify-between gap-2 rounded-lg bg-white px-3 py-2 text-sm text-blue-900">
+      <span className="font-medium">{label.name}</span>
+      <span className="flex items-center gap-2">
+        <button
+          type="button"
+          disabled={isFirst}
+          onClick={onMoveUp}
+          className="rounded border border-blue-200 px-2 py-1 disabled:opacity-30"
+          aria-label="הזז למעלה"
+        >
+          ↑
+        </button>
+        <button
+          type="button"
+          disabled={isLast}
+          onClick={onMoveDown}
+          className="rounded border border-blue-200 px-2 py-1 disabled:opacity-30"
+          aria-label="הזז למטה"
+        >
+          ↓
+        </button>
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          className="text-blue-700 underline"
+        >
+          ערוך
+        </button>
+        <button
+          type="button"
+          onClick={() => onDelete(label.id, label.name)}
+          className="text-red-600"
+        >
+          ×
+        </button>
+      </span>
+    </span>
+  );
+}
+
 function ProductCard({
   product,
   categories,
   assignCategoryId,
   isSaving,
+  showCategoryTools,
+  categoryLabels,
   onAssign,
   onUploadImage,
   onRemoveImage,
   onSavePrice,
+  onSaveSortOrder,
+  onSaveLabels,
+  variantSiblings,
+  onLinkVariant,
+  onUnlinkVariant,
 }: {
   product: AdminProduct;
   categories: Category[];
   assignCategoryId: string;
   isSaving: boolean;
+  showCategoryTools: boolean;
+  categoryLabels: CategoryLabel[];
   onAssign: (categoryId: string) => void;
   onUploadImage: (file: File) => void;
   onRemoveImage: () => void;
   onSavePrice: (priceInput: string) => void;
+  onSaveSortOrder: (sortInput: string) => void;
+  onSaveLabels: (labelIds: string[]) => void;
+  variantSiblings: AdminProduct[];
+  onLinkVariant: (targetQuery: string) => void;
+  onUnlinkVariant: () => void;
 }) {
   const fileInputId = `product-image-${product.itemId}`;
   const [priceInput, setPriceInput] = useState(
     product.price > 0 ? String(product.price) : "",
   );
+  const [sortInput, setSortInput] = useState(
+    product.sortOrder && product.sortOrder > 0 ? String(product.sortOrder) : "",
+  );
+  const [linkInput, setLinkInput] = useState("");
+  const saveSortOrderRef = useRef(onSaveSortOrder);
+
+  useEffect(() => {
+    saveSortOrderRef.current = onSaveSortOrder;
+  }, [onSaveSortOrder]);
 
   useEffect(() => {
     setPriceInput(product.price > 0 ? String(product.price) : "");
   }, [product.price]);
+
+  useEffect(() => {
+    setSortInput(
+      product.sortOrder && product.sortOrder > 0 ? String(product.sortOrder) : "",
+    );
+  }, [product.itemId]);
+
+  useEffect(() => {
+    const trimmed = sortInput.trim();
+    const sortOrder = trimmed === "" ? 0 : Number.parseInt(trimmed, 10);
+    const serverOrder = product.sortOrder ?? 0;
+    const serverDisplay = serverOrder > 0 ? String(serverOrder) : "";
+
+    if (sortInput === serverDisplay) return;
+    if (trimmed !== "" && (!Number.isFinite(sortOrder) || sortOrder <= 0)) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      saveSortOrderRef.current(sortInput);
+    }, 500);
+
+    return () => window.clearTimeout(timer);
+  }, [sortInput, product.sortOrder, product.itemId]);
+
+  function toggleLabel(labelId: string) {
+    const current = product.labelIds ?? [];
+    const next = current.includes(labelId)
+      ? current.filter((id) => id !== labelId)
+      : [...current, labelId];
+    onSaveLabels(next);
+  }
 
   return (
     <article
@@ -792,6 +1326,42 @@ function ProductCard({
         {product.name}
       </h4>
       <p className="mt-1 text-xs text-gray-500">מק&quot;ט: {product.sku}</p>
+
+      {showCategoryTools && (
+        <div className="mt-2 rounded-xl border border-blue-200 bg-blue-50 p-2">
+          <p className="text-xs font-medium text-blue-900">מס סידור בקטגוריה</p>
+          <p className="text-[10px] text-blue-700">נשמר אוטומטית — אין כפתור שמור</p>
+          <input
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            value={sortInput}
+            onChange={(e) => setSortInput(e.target.value.replace(/\D/g, ""))}
+            placeholder="1, 2, 3… או ריק לפי מק״ט"
+            className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs"
+          />
+          {categoryLabels.length > 0 && (
+            <div className="mt-2 space-y-1">
+              <p className="text-xs font-medium text-blue-900">תוויות</p>
+              {categoryLabels.map((label) => (
+                <label
+                  key={label.id}
+                  className="flex items-center gap-2 text-xs text-blue-900"
+                >
+                  <input
+                    type="checkbox"
+                    checked={(product.labelIds ?? []).includes(label.id)}
+                    disabled={isSaving}
+                    onChange={() => toggleLabel(label.id)}
+                    className="h-3.5 w-3.5 rounded border-gray-300"
+                  />
+                  {label.name}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="mt-2 rounded-xl border border-gray-200 bg-gray-50 p-2">
         <p className="text-xs font-medium text-gray-600">מחיר בקטלוג</p>
@@ -845,6 +1415,52 @@ function ProductCard({
           {product.categoryName}
         </span>
       )}
+
+      <div className="mt-2 rounded-xl border border-violet-200 bg-violet-50 p-2">
+        <p className="text-xs font-medium text-violet-900">משפחת שפות</p>
+        {variantSiblings.length > 0 ? (
+          <ul className="mt-1 space-y-0.5 text-[11px] text-violet-900">
+            {variantSiblings.map((sibling) => (
+              <li key={sibling.itemId} className="truncate">
+                {sibling.name} ({sibling.sku})
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-1 text-[11px] text-violet-800">לא מחובר למשפחה</p>
+        )}
+        <div className="mt-1.5 flex gap-1">
+          <input
+            type="text"
+            value={linkInput}
+            disabled={isSaving}
+            onChange={(e) => setLinkInput(e.target.value)}
+            placeholder="מק״ט או שם מוצר"
+            className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs"
+          />
+          <button
+            type="button"
+            disabled={isSaving}
+            onClick={() => {
+              onLinkVariant(linkInput);
+              setLinkInput("");
+            }}
+            className="shrink-0 rounded-lg bg-violet-600 px-2 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+          >
+            חבר
+          </button>
+        </div>
+        {product.variantGroupId && (
+          <button
+            type="button"
+            disabled={isSaving}
+            onClick={onUnlinkVariant}
+            className="mt-1.5 w-full rounded-lg border border-violet-300 py-1 text-[11px] font-medium text-violet-900 disabled:opacity-60"
+          >
+            הסר ממשפחה
+          </button>
+        )}
+      </div>
 
       <div className="mt-auto space-y-2 pt-3">
         <input

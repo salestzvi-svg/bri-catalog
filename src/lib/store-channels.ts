@@ -9,17 +9,34 @@ function isMissingColumn(error: { message?: string; code?: string } | null): boo
     msg.includes("store_link_tracking") ||
     msg.includes("signup_channel") ||
     msg.includes("last_login_channel") ||
+    msg.includes("discount_percent") ||
     msg.includes("schema cache")
   );
 }
 
 export async function insertStore(
   supabase: SupabaseClient,
-  row: { store_name: string; username: string; password_hash: string },
+  row: {
+    store_name: string;
+    username: string;
+    password_hash: string;
+    discount_percent?: number;
+  },
 ) {
-  return supabase
+  const withDiscount = await supabase
     .from("stores")
     .insert(row)
+    .select("id, store_name, username, password_hash, discount_percent")
+    .single();
+
+  if (!withDiscount.error) return withDiscount;
+
+  if (!isMissingColumn(withDiscount.error)) return withDiscount;
+
+  const { discount_percent: _discount, ...baseRow } = row;
+  return supabase
+    .from("stores")
+    .insert(baseRow)
     .select("id, store_name, username, password_hash")
     .single();
 }
@@ -101,8 +118,32 @@ export async function listStores(supabase: SupabaseClient) {
 
     const storesResult = await supabase
       .from("stores")
-      .select("id, store_name, username, created_at")
+      .select("id, store_name, username, created_at, discount_percent")
       .order("created_at", { ascending: false });
+
+    if (storesResult.error && isMissingColumn(storesResult.error)) {
+      const fallback = await supabase
+        .from("stores")
+        .select("id, store_name, username, created_at")
+        .order("created_at", { ascending: false });
+
+      if (fallback.error) {
+        return { ...fallback, trackingEnabled: true as const };
+      }
+
+      const stores = (fallback.data ?? []).map((store) => {
+        const tracking = trackingByStore.get(store.id);
+        return {
+          ...store,
+          discount_percent: 0,
+          signup_channel: (tracking?.signup_channel ?? "default") as WhatsAppChannel,
+          last_login_channel: (tracking?.last_login_channel ??
+            "default") as WhatsAppChannel,
+        };
+      });
+
+      return { data: stores, error: null, trackingEnabled: true as const };
+    }
 
     if (storesResult.error) {
       return { ...storesResult, trackingEnabled: true as const };
@@ -112,6 +153,7 @@ export async function listStores(supabase: SupabaseClient) {
       const tracking = trackingByStore.get(store.id);
       return {
         ...store,
+        discount_percent: Number(store.discount_percent ?? 0),
         signup_channel: (tracking?.signup_channel ?? "default") as WhatsAppChannel,
         last_login_channel: (tracking?.last_login_channel ??
           "default") as WhatsAppChannel,
@@ -124,13 +166,14 @@ export async function listStores(supabase: SupabaseClient) {
   const storesWithColumns = await supabase
     .from("stores")
     .select(
-      "id, store_name, username, created_at, signup_channel, last_login_channel",
+      "id, store_name, username, created_at, signup_channel, last_login_channel, discount_percent",
     )
     .order("created_at", { ascending: false });
 
   if (!storesWithColumns.error) {
     const stores = (storesWithColumns.data ?? []).map((store) => ({
       ...store,
+      discount_percent: Number(store.discount_percent ?? 0),
       signup_channel: (store.signup_channel ?? "default") as WhatsAppChannel,
       last_login_channel: (store.last_login_channel ??
         "default") as WhatsAppChannel,
@@ -150,6 +193,7 @@ export async function listStores(supabase: SupabaseClient) {
 
     const stores = (storesResult.data ?? []).map((store) => ({
       ...store,
+      discount_percent: 0,
       signup_channel: "default" as WhatsAppChannel,
       last_login_channel: "default" as WhatsAppChannel,
     }));

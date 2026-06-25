@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSuperAdminSession } from "@/lib/auth";
+import { requireAdminSession } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/server";
 import {
   parseStoreOrderRow,
@@ -10,7 +10,7 @@ export async function GET(
   _request: Request,
   context: { params: Promise<{ storeId: string }> },
 ) {
-  const session = await requireSuperAdminSession();
+  const session = await requireAdminSession();
   if (!session) {
     return NextResponse.json({ error: "לא מורשה" }, { status: 403 });
   }
@@ -27,6 +27,7 @@ export async function GET(
       "id, store_id, store_name, username, items, total_amount, notes, whatsapp_channel, created_at",
     )
     .eq("store_id", storeId)
+    .eq("whatsapp_channel", "default")
     .order("created_at", { ascending: false })
     .limit(STORE_ORDERS_PER_STORE_LIMIT);
 

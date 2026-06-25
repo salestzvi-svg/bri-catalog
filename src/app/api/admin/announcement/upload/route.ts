@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { requireAdminSession } from "@/lib/auth";
+import {
+  ANNOUNCEMENT_IMAGE_MAX_BYTES,
+  ANNOUNCEMENT_IMAGE_TYPES,
+  ANNOUNCEMENTS_BUCKET,
+  ensureAnnouncementsBucket,
+} from "@/lib/announcement-image-upload";
 
-const MAX_BYTES = 5 * 1024 * 1024;
-const ALLOWED_TYPES = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/gif",
-]);
+const MAX_BYTES = ANNOUNCEMENT_IMAGE_MAX_BYTES;
+const ALLOWED_TYPES = ANNOUNCEMENT_IMAGE_TYPES;
 
 export async function POST(request: Request) {
   const session = await requireAdminSession();
@@ -42,8 +43,17 @@ export async function POST(request: Request) {
   const buffer = Buffer.from(await file.arrayBuffer());
 
   const supabase = createAdminClient();
+
+  try {
+    await ensureAnnouncementsBucket(supabase);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "שגיאה ביצירת אחסון תמונות";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+
   const { error: uploadError } = await supabase.storage
-    .from("announcements")
+    .from(ANNOUNCEMENTS_BUCKET)
     .upload(path, buffer, {
       contentType: file.type,
       upsert: true,
@@ -62,7 +72,7 @@ export async function POST(request: Request) {
   }
 
   const { data: urlData } = supabase.storage
-    .from("announcements")
+    .from(ANNOUNCEMENTS_BUCKET)
     .getPublicUrl(path);
 
   return NextResponse.json({ imageUrl: urlData.publicUrl });

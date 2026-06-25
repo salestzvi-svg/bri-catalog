@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { CatalogProduct, RivhitDocumentType } from "@/lib/types";
+import { compareProducts } from "@/lib/product-sort";
+import { filterProductsBySearch } from "@/lib/product-variants";
 import AgentNav from "@/components/AgentNav";
 
 interface CustomerOption {
@@ -22,13 +24,6 @@ function formatPrice(price: number) {
     currency: "ILS",
     maximumFractionDigits: 2,
   }).format(price);
-}
-
-function compareSku(a: string, b: string) {
-  const numA = Number.parseInt(a, 10);
-  const numB = Number.parseInt(b, 10);
-  if (!Number.isNaN(numA) && !Number.isNaN(numB)) return numA - numB;
-  return a.localeCompare(b, "he", { numeric: true });
 }
 
 function QuantityStepper({
@@ -173,7 +168,7 @@ export default function AgentOrderView({
     return Array.from(map.values())
       .map((cat) => ({
         ...cat,
-        products: [...cat.products].sort((a, b) => compareSku(a.sku, b.sku)),
+        products: [...cat.products].sort(compareProducts),
       }))
       .sort((a, b) => a.sortOrder - b.sortOrder);
   }, [products]);
@@ -328,12 +323,10 @@ export default function AgentOrderView({
 
   const categoryProducts =
     categories.find((c) => c.id === selectedCategoryId)?.products ?? [];
-  const searchResults = products.filter(
-    (p) =>
-      search.trim() &&
-      (p.name.toLowerCase().includes(search.toLowerCase()) ||
-        p.sku.toLowerCase().includes(search.toLowerCase())),
-  );
+  const searchResults = filterProductsBySearch(
+    products,
+    search,
+  ).filter((p) => search.trim().length > 0);
   const onCategoryPage = selectedCategoryId !== null;
   const isSearching = search.trim().length > 0;
 

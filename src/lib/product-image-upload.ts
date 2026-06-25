@@ -9,6 +9,23 @@ export const PRODUCT_IMAGE_TYPES = new Set([
   "image/gif",
 ]);
 
+export async function ensureProductImagesBucket(supabase: SupabaseClient) {
+  const { data: buckets } = await supabase.storage.listBuckets();
+  if (buckets?.some((bucket) => bucket.id === PRODUCT_IMAGES_BUCKET)) {
+    return;
+  }
+
+  const { error } = await supabase.storage.createBucket(PRODUCT_IMAGES_BUCKET, {
+    public: true,
+    fileSizeLimit: PRODUCT_IMAGE_MAX_BYTES,
+    allowedMimeTypes: [...PRODUCT_IMAGE_TYPES],
+  });
+
+  if (error && !error.message.includes("already exists")) {
+    throw new Error(error.message);
+  }
+}
+
 function extensionFromContentType(contentType: string): string {
   if (contentType.includes("png")) return "png";
   if (contentType.includes("webp")) return "webp";

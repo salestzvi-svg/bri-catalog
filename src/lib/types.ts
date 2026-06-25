@@ -25,6 +25,13 @@ export interface Category {
   is_staging?: boolean;
 }
 
+export interface CategoryLabel {
+  id: string;
+  category_id: string;
+  name: string;
+  sort_order: number;
+}
+
 export interface CatalogProduct {
   itemId: number;
   sku: string;
@@ -34,6 +41,12 @@ export interface CatalogProduct {
   categoryId: string;
   categoryName: string;
   categorySortOrder: number;
+  sortOrder: number;
+  labelIds: string[];
+  variantGroupId?: string | null;
+  /** כל השמות במשפחה — לחיפוש רב-לשוני */
+  searchNames?: string[];
+  variantItemIds?: number[];
 }
 
 export interface Store {
@@ -41,6 +54,7 @@ export interface Store {
   store_name: string;
   username: string;
   created_at: string;
+  discount_percent?: number;
   signup_channel?: WhatsAppChannel;
   last_login_channel?: WhatsAppChannel;
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { StoreOrder, WhatsAppChannel } from "@/lib/types";
+import type { StoreOrder } from "@/lib/types";
 import {
   formatOrderPrice,
   STORE_ORDERS_MAX_RETAINED,
@@ -11,21 +11,6 @@ interface StoreOption {
   id: string;
   store_name: string;
   username: string;
-}
-
-function ChannelLabel({ channel }: { channel: WhatsAppChannel }) {
-  if (channel === "b") {
-    return (
-      <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-800">
-        קישור 2
-      </span>
-    );
-  }
-  return (
-    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">
-      קישור 1
-    </span>
-  );
 }
 
 export default function OrdersPageClient({
@@ -39,6 +24,8 @@ export default function OrdersPageClient({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [totalSpent, setTotalSpent] = useState(0);
+  const [sendingTest, setSendingTest] = useState(false);
+  const [testMessage, setTestMessage] = useState("");
 
   useEffect(() => {
     if (!isSuperAdmin) return;
@@ -88,29 +75,77 @@ export default function OrdersPageClient({
     };
   }, [storeFilter]);
 
+  async function sendTestReport() {
+    setSendingTest(true);
+    setTestMessage("");
+    setError("");
+
+    try {
+      const response = await fetch("/api/admin/orders/test-report", {
+        method: "POST",
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError(data.error || "שליחת בדיקה נכשלה");
+        return;
+      }
+
+      setTestMessage(
+        `נשלח מייל בדיקה ל-${data.emailTo} עם ${data.orderCount} הזמנות. בדוק את תיבת הדואר (גם ספאם).`,
+      );
+    } catch {
+      setError("שגיאת רשת בשליחת בדיקה");
+    } finally {
+      setSendingTest(false);
+    }
+  }
+
   const orderCount = orders.length;
 
   const storeLabel = useMemo(() => {
     if (!storeFilter) return "כל החנויות";
     const store = stores.find((s) => s.id === storeFilter);
-    return store ? `${store.store_name} (${store.username})` : "חנות נבחרת";
+    return store ? store.store_name : "חנות נבחרת";
   }, [storeFilter, stores]);
 
   return (
     <div className="rounded-2xl bg-white p-4 shadow-sm sm:p-6">
-      <h2 className="text-xl font-bold">
-        {isSuperAdmin ? "הזמנות לקוחות" : "הזמנות — קישור 2"}
-      </h2>
-      <p className="mt-2 text-sm text-gray-600">
-        {isSuperAdmin
-          ? "כל ההזמנות שנשלחו ל-WhatsApp משני הקישורים — עם תיוג קישור 1 / קישור 2."
-          : "הזמנות מלקוחות שנכנסו דרך קישור 2 (/b/login) בלבד."}
-      </p>
-      <p className="mt-1 text-xs text-gray-500">
-        ההזמנות נשמרות בטבלה נפרדת ולא משפיעות על מהירות הקטלוג. נשמרות עד{" "}
-        {STORE_ORDERS_MAX_RETAINED} הזמנות אחרונות לכל קישור — ישנות נמחקות
-        אוטומטית.
-      </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-bold">הזמנות לקוחות</h2>
+          <p className="mt-2 text-sm text-gray-600">
+            הזמנות שנשלחו ל-WhatsApp מלקוחות שנכנסו דרך קישור הכניסה הראשי.
+          </p>
+          <p className="mt-1 text-xs text-gray-500">
+            ההזמנות נשמרות בטבלה נפרדת ולא משפיעות על מהירות הקטלוג. נשמרות עד{" "}
+            {STORE_ORDERS_MAX_RETAINED} הזמנות אחרונות — ישנות נמחקות אוטומטית.
+            ב-1 לכל חודש נשלח דוח אקסל של החודש הקודם במייל (אם הוגדר) וההזמנות
+            של אותו חודש נמחקות.
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+          <button
+            type="button"
+            onClick={sendTestReport}
+            disabled={sendingTest}
+            className="rounded-xl border border-emerald-600 px-4 py-2.5 text-sm font-semibold text-emerald-800 disabled:opacity-60"
+          >
+            {sendingTest ? "שולח..." : "שלח דוח בדיקה למייל"}
+          </button>
+          <a
+            href={
+              storeFilter
+                ? `/api/admin/orders/export?storeId=${encodeURIComponent(storeFilter)}`
+                : "/api/admin/orders/export"
+            }
+            className="rounded-xl bg-emerald-700 px-4 py-2.5 text-center text-sm font-semibold text-white"
+            download
+          >
+            הורד אקסל
+          </a>
+        </div>
+      </div>
 
       {isSuperAdmin && (
         <div className="mt-4">
@@ -125,7 +160,7 @@ export default function OrdersPageClient({
             <option value="">כל החנויות</option>
             {stores.map((store) => (
               <option key={store.id} value={store.id}>
-                {store.store_name} — {store.username}
+                {store.store_name}
               </option>
             ))}
           </select>
@@ -150,6 +185,12 @@ export default function OrdersPageClient({
         </div>
       )}
 
+      {testMessage && (
+        <p className="mt-4 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+          {testMessage}
+        </p>
+      )}
+
       {error && (
         <p className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
@@ -160,9 +201,7 @@ export default function OrdersPageClient({
         <p className="mt-6 text-gray-600">טוען הזמנות...</p>
       ) : !error && orderCount === 0 ? (
         <p className="mt-6 text-gray-600">
-          {isSuperAdmin
-            ? "עדיין אין הזמנות שמורות. הזמנות יופיעו כאן מרגע שליחה ל-WhatsApp."
-            : "עדיין אין הזמנות מקישור 2. הזמנות יופיעו כאן מרגע שליחה ל-WhatsApp."}
+          עדיין אין הזמנות שמורות. הזמנות יופיעו כאן מרגע שליחה ל-WhatsApp.
         </p>
       ) : (
         <div className="mt-6 space-y-4">
@@ -174,16 +213,10 @@ export default function OrdersPageClient({
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <p className="font-bold text-gray-900">{order.store_name}</p>
-                  <p className="text-sm text-gray-600">
-                    משתמש: {order.username}
-                  </p>
                   <p className="mt-1 text-sm text-gray-500">
                     {new Date(order.created_at).toLocaleString("he-IL")}
                   </p>
                 </div>
-                {isSuperAdmin && (
-                  <ChannelLabel channel={order.whatsapp_channel} />
-                )}
               </div>
 
               <ul className="mt-3 space-y-2 text-sm">

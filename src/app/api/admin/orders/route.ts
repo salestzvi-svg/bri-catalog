@@ -12,7 +12,6 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "לא מורשה" }, { status: 403 });
   }
 
-  const isSuperAdmin = session.role === "super_admin";
   const { searchParams } = new URL(request.url);
   const storeId = searchParams.get("storeId");
 
@@ -23,11 +22,8 @@ export async function GET(request: Request) {
       "id, store_id, store_name, username, items, total_amount, notes, whatsapp_channel, created_at",
     )
     .order("created_at", { ascending: false })
-    .limit(STORE_ORDERS_LIST_LIMIT);
-
-  if (!isSuperAdmin) {
-    query = query.eq("whatsapp_channel", "b");
-  }
+    .limit(STORE_ORDERS_LIST_LIMIT)
+    .eq("whatsapp_channel", "default");
 
   if (storeId) {
     query = query.eq("store_id", storeId);
@@ -49,6 +45,6 @@ export async function GET(request: Request) {
     orderCount: orders.length,
     totalSpent,
     limit: STORE_ORDERS_LIST_LIMIT,
-    linkFilter: isSuperAdmin ? "all" : "b",
+    linkFilter: "default",
   });
 }

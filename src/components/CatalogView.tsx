@@ -1,13 +1,22 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { CartItem, CatalogProduct, StoreOrderItem } from "@/lib/types";
+import type { CartItem, CatalogProduct, Category, CategoryLabel, StoreOrderItem } from "@/lib/types";
+import { compareProducts } from "@/lib/product-sort";
+import { filterProductsBySearch } from "@/lib/product-variants";
 import {
   buildEmailOrderUrl,
   buildWhatsAppOrderUrl,
   getOrderEmail,
   type WhatsAppChannel,
 } from "@/lib/whatsapp";
+import { applyDiscount, type StoreUiStrings } from "@/lib/i18n/store-ui";
+import {
+  calculateDeliveryFee,
+  calculateOrderTotal,
+} from "@/lib/shipping";
+
+const DELIVERY_SKU = "משלוח";
 
 function buildWhatsAppUrl(
   phone: string,
@@ -15,24 +24,9 @@ function buildWhatsAppUrl(
   items: { sku: string; quantity: number; name?: string }[],
   notes: string,
   total: number,
+  options?: { subtotal?: number; deliveryFee?: number },
 ) {
-  return buildWhatsAppOrderUrl(phone, storeName, items, notes, total);
-}
-
-function compareSku(a: string, b: string) {
-  const numA = Number.parseInt(a, 10);
-  const numB = Number.parseInt(b, 10);
-  if (!Number.isNaN(numA) && !Number.isNaN(numB)) return numA - numB;
-  return a.localeCompare(b, "he", { numeric: true });
-}
-
-function matchesSearch(product: CatalogProduct, term: string) {
-  const q = term.trim().toLowerCase();
-  if (!q) return true;
-  return (
-    product.name.toLowerCase().includes(q) ||
-    product.sku.toLowerCase().includes(q)
-  );
+  return buildWhatsAppOrderUrl(phone, storeName, items, notes, total, options);
 }
 
 interface CategoryGroup {
@@ -42,21 +36,63 @@ interface CategoryGroup {
   products: CatalogProduct[];
 }
 
-function formatPrice(price: number) {
+function formatPrice(price: number, locale: "he" | "en" = "he") {
   if (!price || price <= 0) return null;
-  return new Intl.NumberFormat("he-IL", {
+  return new Intl.NumberFormat(locale === "en" ? "en-US" : "he-IL", {
     style: "currency",
     currency: "ILS",
     maximumFractionDigits: 2,
   }).format(price);
 }
 
+function unitPrice(price: number, discountPercent: number) {
+  return applyDiscount(price, discountPercent);
+}
+
+function ProductPrice({
+  price,
+  discountPercent,
+  showPrices,
+  locale,
+  compact = false,
+}: {
+  price: number;
+  discountPercent: number;
+  showPrices: boolean;
+  locale: "he" | "en";
+  compact?: boolean;
+}) {
+  if (!showPrices || !price || price <= 0) return null;
+  const sale = unitPrice(price, discountPercent);
+  if (discountPercent > 0 && sale < price) {
+    return (
+      <div className={compact ? "mt-0.5" : "mt-1"}>
+        <p className={`text-gray-400 line-through ${compact ? "text-[10px]" : "text-xs"}`}>
+          {formatPrice(price, locale)}
+        </p>
+        <p className={`font-bold text-emerald-800 ${compact ? "text-[11px]" : "text-sm"}`}>
+          {formatPrice(sale, locale)}
+        </p>
+      </div>
+    );
+  }
+  return (
+    <p className={`font-bold text-emerald-800 ${compact ? "mt-0.5 text-[11px]" : "mt-1 text-sm"}`}>
+      {formatPrice(price, locale)}
+    </p>
+  );
+}
+
 function QuantityStepper({
   value,
   onChange,
+  t,
+  compact = false,
 }: {
   value: number;
   onChange: (value: number) => void;
+  t: StoreUiStrings;
+  compact?: boolean;
 }) {
   const [draft, setDraft] = useState(String(value));
   const [focused, setFocused] = useState(false);
@@ -75,12 +111,12 @@ function QuantityStepper({
   }
 
   return (
-    <div className="flex items-center rounded-lg border border-gray-300 bg-white">
+    <div className={`flex items-center rounded-md border border-gray-300 bg-white ${compact ? "w-full" : ""}`}>
       <button
         type="button"
         onClick={() => onChange(Math.max(1, value - 1))}
-        className="px-2 py-2 text-lg font-bold text-gray-700"
-        aria-label="הפחת כמות"
+        className={`font-bold text-gray-700 ${compact ? "px-1 py-0.5 text-sm" : "px-2 py-2 text-lg"}`}
+        aria-label={t.decreaseQty}
       >
         −
       </button>
@@ -106,14 +142,16 @@ function QuantityStepper({
             e.currentTarget.blur();
           }
         }}
-        className="w-14 border-0 bg-emerald-50 py-2 text-center text-base font-bold text-gray-900 outline-none ring-emerald-400 focus:bg-emerald-100 focus:ring-2"
-        aria-label="כמות — הקלד מספר"
+        className={`flex-1 border-0 bg-emerald-50 text-center font-bold text-gray-900 outline-none ring-emerald-400 focus:bg-emerald-100 focus:ring-1 ${
+          compact ? "w-7 py-0.5 text-xs" : "w-14 py-2 text-base focus:ring-2"
+        }`}
+        aria-label={t.qtyLabel}
       />
       <button
         type="button"
         onClick={() => onChange(value + 1)}
-        className="px-2 py-2 text-lg font-bold text-gray-700"
-        aria-label="הוסף כמות"
+        className={`font-bold text-gray-700 ${compact ? "px-1 py-0.5 text-sm" : "px-2 py-2 text-lg"}`}
+        aria-label={t.increaseQty}
       >
         +
       </button>
@@ -129,6 +167,9 @@ function ProductGrid({
   onAddToCart,
   onImageClick,
   showPrices,
+  discountPercent,
+  t,
+  locale,
 }: {
   products: CatalogProduct[];
   cart: Record<string, number>;
@@ -139,65 +180,71 @@ function ProductGrid({
   onAddToCart: (product: CatalogProduct) => void;
   onImageClick: (src: string, alt: string) => void;
   showPrices: boolean;
+  discountPercent: number;
+  t: StoreUiStrings;
+  locale: "he" | "en";
 }) {
   if (products.length === 0) {
     return (
       <p className="rounded-2xl bg-white p-6 text-center text-sm text-gray-600 shadow">
-        לא נמצאו מוצרים.
+        {t.noProducts}
       </p>
     );
   }
 
   return (
-    <div className="grid grid-cols-2 gap-3">
+    <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
       {products.map((product) => {
         const inCart = (cart[product.sku] ?? 0) > 0;
         return (
           <article
             key={product.itemId}
-            className={`flex flex-col rounded-2xl p-3 shadow-sm transition ${
+            className={`flex flex-col rounded-lg p-1.5 shadow-sm transition ${
               inCart
-                ? "border-2 border-emerald-600 bg-emerald-100"
+                ? "border-2 border-emerald-600 bg-emerald-50"
                 : "border border-gray-200 bg-white"
             }`}
           >
-            {product.image ? (
-              <button
-                type="button"
-                onClick={() => onImageClick(product.image!, product.name)}
-                className="mb-2 overflow-hidden rounded-xl"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={product.image}
-                  alt={product.name}
-                  loading="lazy"
-                  decoding="async"
-                  className="aspect-square w-full object-cover"
-                />
-              </button>
-            ) : (
-              <div className="mb-2 flex aspect-square w-full items-center justify-center rounded-xl bg-gray-100 text-xs text-gray-500">
-                אין תמונה
-              </div>
-            )}
+            <div className="relative">
+              {product.image ? (
+                <button
+                  type="button"
+                  onClick={() => onImageClick(product.image!, product.name)}
+                  className="block w-full overflow-hidden rounded-md"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={product.image}
+                    alt={product.name}
+                    loading="lazy"
+                    decoding="async"
+                    className="aspect-square w-full object-cover"
+                  />
+                </button>
+              ) : (
+                <div className="flex aspect-square w-full items-center justify-center rounded-md bg-gray-100 text-[10px] text-gray-500">
+                  {t.noImage}
+                </div>
+              )}
+              {inCart && (
+                <span className="absolute end-1 top-1 flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white">
+                  {cart[product.sku]}
+                </span>
+              )}
+            </div>
 
-            <h3 className="line-clamp-2 text-sm font-semibold text-gray-900">
+            <h3 className="mt-1 line-clamp-2 text-[11px] font-medium leading-tight text-gray-900">
               {product.name}
             </h3>
-            <p className="mt-1 text-xs text-gray-500">מק&quot;ט: {product.sku}</p>
-            {showPrices && formatPrice(product.price) && (
-              <p className="mt-1 text-sm font-bold text-emerald-800">
-                {formatPrice(product.price)}
-              </p>
-            )}
-            {inCart && (
-              <p className="mt-1 text-xs font-medium text-emerald-800">
-                בעגלה: {cart[product.sku]}
-              </p>
-            )}
+            <ProductPrice
+              price={product.price}
+              discountPercent={discountPercent}
+              showPrices={showPrices}
+              locale={locale}
+              compact
+            />
 
-            <div className="mt-auto flex items-center gap-2 pt-3">
+            <div className="mt-auto space-y-1 pt-1.5">
               <QuantityStepper
                 value={quantities[product.itemId] ?? 1}
                 onChange={(value) =>
@@ -206,12 +253,15 @@ function ProductGrid({
                     [product.itemId]: value,
                   }))
                 }
+                t={t}
+                compact
               />
               <button
+                type="button"
                 onClick={() => onAddToCart(product)}
-                className="flex-1 rounded-xl bg-emerald-600 py-2 text-xs font-semibold text-white"
+                className="w-full rounded-md bg-emerald-600 py-1 text-[11px] font-semibold text-white"
               >
-                הוסף
+                {t.add}
               </button>
             </div>
           </article>
@@ -224,19 +274,32 @@ function ProductGrid({
 export default function CatalogView({
   storeName,
   initialProducts,
+  initialCategories,
+  initialCategoryLabels = [],
   whatsappNumber,
   whatsappChannel = "default",
+  discountPercent = 0,
+  t,
+  locale,
+  onToggleLocale,
 }: {
   storeName: string;
   initialProducts: CatalogProduct[];
+  initialCategories: Category[];
+  initialCategoryLabels?: CategoryLabel[];
   whatsappNumber: string;
   whatsappChannel?: WhatsAppChannel;
+  discountPercent?: number;
+  t: StoreUiStrings;
+  locale: "he" | "en";
+  onToggleLocale: () => void;
 }) {
   const SHOW_PRICES_KEY = "catalog_show_prices";
   const [products] = useState(initialProducts);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(
     null,
   );
+  const [selectedLabelId, setSelectedLabelId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState<Record<string, number>>({});
   const [notes, setNotes] = useState("");
@@ -272,46 +335,55 @@ export default function CatalogView({
     setQuantities(defaults);
   }, [initialProducts]);
 
+  const labelsByCategory = useMemo(() => {
+    const map = new Map<string, CategoryLabel[]>();
+    for (const label of initialCategoryLabels) {
+      const list = map.get(label.category_id) ?? [];
+      list.push(label);
+      map.set(label.category_id, list);
+    }
+    for (const list of map.values()) {
+      list.sort((a, b) => a.sort_order - b.sort_order);
+    }
+    return map;
+  }, [initialCategoryLabels]);
+
   const categories = useMemo<CategoryGroup[]>(() => {
-    const map = new Map<string, CategoryGroup>();
+    const productsByCategory = new Map<string, CatalogProduct[]>();
 
     for (const product of products) {
-      const existing = map.get(product.categoryId);
-      if (existing) {
-        existing.products.push(product);
-      } else {
-        map.set(product.categoryId, {
-          id: product.categoryId,
-          name: product.categoryName,
-          sortOrder: product.categorySortOrder,
-          products: [product],
-        });
-      }
+      const list = productsByCategory.get(product.categoryId) ?? [];
+      list.push(product);
+      productsByCategory.set(product.categoryId, list);
     }
 
-    for (const group of map.values()) {
-      group.products.sort((a, b) => compareSku(a.sku, b.sku));
-    }
-
-    return Array.from(map.values()).sort((a, b) => a.sortOrder - b.sortOrder);
-  }, [products]);
+    return initialCategories.map((category) => ({
+      id: category.id,
+      name: category.name,
+      sortOrder: category.sort_order,
+      products: (productsByCategory.get(category.id) ?? []).sort(compareProducts),
+    }));
+  }, [products, initialCategories]);
 
   const selectedCategory = categories.find((c) => c.id === selectedCategoryId);
+  const categoryLabels = selectedCategory
+    ? (labelsByCategory.get(selectedCategory.id) ?? [])
+    : [];
   const isSearching = search.trim().length > 0;
   const onCategoryPage = Boolean(selectedCategory);
-  const browsingProducts = onCategoryPage || (isSearching && !onCategoryPage);
-
-  const searchResults = useMemo(() => {
-    if (!isSearching) return [];
-    return products
-      .filter((p) => matchesSearch(p, search))
-      .sort((a, b) => compareSku(a.sku, b.sku));
-  }, [products, search, isSearching]);
+  const browsingProducts = onCategoryPage;
 
   const categoryProducts = useMemo(() => {
     if (!selectedCategory) return [];
-    return selectedCategory.products.filter((p) => matchesSearch(p, search));
-  }, [selectedCategory, search]);
+    let list = selectedCategory.products;
+    if (search.trim()) {
+      list = filterProductsBySearch(list, search);
+    }
+    if (selectedLabelId) {
+      list = list.filter((p) => p.labelIds.includes(selectedLabelId));
+    }
+    return list;
+  }, [selectedCategory, search, selectedLabelId]);
 
   const skuToProduct = useMemo(() => {
     const map = new Map<string, CatalogProduct>();
@@ -358,22 +430,34 @@ export default function CatalogView({
     }
   }
 
-  const cartTotal = useMemo(() => {
+  const cartSubtotal = useMemo(() => {
     return cartItems.reduce((sum, item) => {
       const product = skuToProduct.get(item.sku);
       if (!product?.price || product.price <= 0) return sum;
-      return sum + product.price * item.quantity;
+      return sum + unitPrice(product.price, discountPercent) * item.quantity;
     }, 0);
-  }, [cartItems, skuToProduct]);
+  }, [cartItems, skuToProduct, discountPercent]);
+
+  const deliveryFee = useMemo(
+    () => calculateDeliveryFee(cartSubtotal),
+    [cartSubtotal],
+  );
+
+  const orderTotal = useMemo(
+    () => calculateOrderTotal(cartSubtotal),
+    [cartSubtotal],
+  );
 
   function openCategory(categoryId: string) {
     setSelectedCategoryId(categoryId);
+    setSelectedLabelId(null);
     setSearch("");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function goToCategories() {
     setSelectedCategoryId(null);
+    setSelectedLabelId(null);
     setSearch("");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -386,19 +470,31 @@ export default function CatalogView({
   async function persistOrder() {
     const orderItems: StoreOrderItem[] = cartItems.map((item) => {
       const product = skuToProduct.get(item.sku);
-      const unitPrice =
-        product?.price && product.price > 0 ? product.price : null;
+      const unit =
+        product?.price && product.price > 0
+          ? unitPrice(product.price, discountPercent)
+          : null;
       const lineTotal =
-        unitPrice !== null ? unitPrice * item.quantity : null;
+        unit !== null ? unit * item.quantity : null;
 
       return {
         sku: item.sku,
         name: product?.name ?? item.sku,
         quantity: item.quantity,
-        unitPrice,
+        unitPrice: unit,
         lineTotal,
       };
     });
+
+    if (deliveryFee > 0) {
+      orderItems.push({
+        sku: DELIVERY_SKU,
+        name: t.deliveryFee,
+        quantity: 1,
+        unitPrice: deliveryFee,
+        lineTotal: deliveryFee,
+      });
+    }
 
     try {
       await fetch("/api/store/orders", {
@@ -406,7 +502,7 @@ export default function CatalogView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           items: orderItems,
-          totalAmount: cartTotal,
+          totalAmount: orderTotal,
           notes: notes.trim() || null,
         }),
       });
@@ -431,7 +527,7 @@ export default function CatalogView({
 
   async function sendOrderViaWhatsApp() {
     if (cartItems.length === 0) {
-      alert("העגלה ריקה. הוסף מוצרים לפני שליחה.");
+      alert(t.emptyCart);
       return;
     }
 
@@ -443,7 +539,8 @@ export default function CatalogView({
         storeName,
         orderItemsForSend(),
         notes,
-        cartTotal,
+        orderTotal,
+        { subtotal: cartSubtotal, deliveryFee },
       ),
       "_blank",
       "noopener,noreferrer",
@@ -454,13 +551,13 @@ export default function CatalogView({
 
   async function sendOrderViaEmail() {
     if (cartItems.length === 0) {
-      alert("העגלה ריקה. הוסף מוצרים לפני שליחה.");
+      alert(t.emptyCart);
       return;
     }
 
     const items = orderItemsForSend();
     const orderNotes = notes;
-    const total = cartTotal;
+    const total = orderTotal;
 
     await persistOrder();
 
@@ -471,6 +568,7 @@ export default function CatalogView({
       items,
       orderNotes,
       total,
+      { subtotal: cartSubtotal, deliveryFee },
     );
 
     clearOrderState();
@@ -478,18 +576,18 @@ export default function CatalogView({
   }
 
   return (
-    <div className="mx-auto min-h-screen max-w-lg bg-gray-50 pb-40">
+    <div className="mx-auto min-h-screen max-w-lg bg-gray-50 pb-36">
       <header className="sticky top-0 z-20 border-b border-emerald-100 bg-white shadow-sm">
-        <div className="flex items-center gap-2 px-4 py-3">
+        <div className="flex items-center gap-1.5 px-2 py-2">
           <div className="min-w-0 flex-1">
-            <p className="truncate text-xs text-gray-500">שלום,</p>
+            <p className="truncate text-xs text-gray-500">{t.hello}</p>
             <h1 className="truncate text-base font-bold text-emerald-800">
               {storeName}
             </h1>
             {browsingProducts && (
               <p className="truncate text-sm font-medium text-gray-700">
-                {isSearching && !onCategoryPage
-                  ? `חיפוש: ${search.trim()}`
+                {isSearching
+                  ? `${t.searchLabel}: ${search.trim()}`
                   : selectedCategory?.name}
               </p>
             )}
@@ -497,9 +595,18 @@ export default function CatalogView({
 
           <button
             type="button"
+            onClick={onToggleLocale}
+            className="rounded-lg border border-gray-300 px-2 py-2 text-xs font-medium"
+            aria-label={t.languageAria}
+          >
+            {t.language}
+          </button>
+
+          <button
+            type="button"
             onClick={() => setCartOpen(true)}
             className="relative rounded-lg border border-gray-300 p-2"
-            aria-label="עגלת קניות"
+            aria-label={t.cart}
           >
             <span className="text-xl">🛒</span>
             {cartCount > 0 && (
@@ -513,7 +620,7 @@ export default function CatalogView({
             onClick={logout}
             className="rounded-lg border border-gray-300 px-2 py-2 text-xs"
           >
-            יציאה
+            {t.logout}
           </button>
         </div>
 
@@ -521,25 +628,26 @@ export default function CatalogView({
           <button
             type="button"
             onClick={goToCategories}
-            className="flex w-full items-center justify-center gap-2 border-t border-emerald-200 bg-emerald-600 px-4 py-3.5 text-base font-bold text-white active:bg-emerald-700"
+            className="flex w-full items-center justify-center gap-2 border-t border-emerald-200 bg-emerald-600 px-3 py-2 text-sm font-bold text-white active:bg-emerald-700"
           >
-            <span aria-hidden="true">→</span>
-            חזרה לקטגוריות
+            <span aria-hidden="true">{locale === "he" ? "→" : "←"}</span>
+            {t.backToCategories}
           </button>
         )}
 
         {onCategoryPage && categories.length > 1 && (
-          <div className="border-t border-gray-100 bg-gray-50 px-4 py-2">
-            <div className="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="border-t border-gray-100 bg-gray-50 px-2 py-1.5">
+            <div className="flex gap-1.5 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {categories.map((category) => (
                 <button
                   key={category.id}
                   type="button"
                   onClick={() => {
                     setSelectedCategoryId(category.id);
+                    setSelectedLabelId(null);
                     window.scrollTo({ top: 0, behavior: "smooth" });
                   }}
-                  className={`shrink-0 rounded-full px-4 py-2 text-sm font-medium transition ${
+                  className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium transition ${
                     category.id === selectedCategoryId
                       ? "bg-emerald-600 text-white shadow-sm"
                       : "border border-gray-200 bg-white text-gray-700"
@@ -552,43 +660,65 @@ export default function CatalogView({
           </div>
         )}
 
-        {categories.length > 0 && (
-          <div className="space-y-2 px-4 pb-3 pt-2">
+        {onCategoryPage && categoryLabels.length > 0 && (
+          <div className="border-t border-gray-100 bg-white px-2 py-1.5">
+            <div className="flex gap-1.5 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <button
+                type="button"
+                onClick={() => setSelectedLabelId(null)}
+                className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium transition ${
+                  selectedLabelId === null
+                    ? "bg-emerald-600 text-white"
+                    : "border border-gray-200 bg-gray-50 text-gray-700"
+                }`}
+              >
+                {t.allLabels}
+              </button>
+              {categoryLabels.map((label) => (
+                <button
+                  key={label.id}
+                  type="button"
+                  onClick={() => setSelectedLabelId(label.id)}
+                  className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium transition ${
+                    selectedLabelId === label.id
+                      ? "bg-emerald-600 text-white"
+                      : "border border-gray-200 bg-gray-50 text-gray-700"
+                  }`}
+                >
+                  {label.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {onCategoryPage && (
+          <div className="flex items-center gap-2 border-t border-gray-100 px-2 py-1.5">
             <input
               type="search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="חיפוש לפי שם או מק״ט..."
-              className="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm"
+              placeholder={t.searchPlaceholder}
+              className="min-w-0 flex-1 rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs"
             />
-            <label className="flex items-center gap-2 text-sm text-gray-700">
+            <label className="flex shrink-0 items-center gap-1 text-[11px] text-gray-600">
               <input
                 type="checkbox"
                 checked={showPrices}
                 onChange={toggleShowPrices}
-                className="h-4 w-4 rounded border-gray-300"
+                className="h-3.5 w-3.5 rounded border-gray-300"
               />
-              הצג מחירים (מחיר מכירה מ-Rivhit)
+              {t.showPrices}
             </label>
           </div>
         )}
       </header>
 
-      <main className="scroll-smooth px-4 py-4">
+      <main className="scroll-smooth px-2 py-2">
         {categories.length === 0 ? (
           <div className="rounded-2xl bg-white p-6 text-center text-gray-600 shadow">
-            <p className="font-medium">הקטלוג עדיין ריק</p>
+            <p className="font-medium">{t.emptyCatalog}</p>
           </div>
-        ) : isSearching && !onCategoryPage ? (
-          <ProductGrid
-            products={searchResults}
-            cart={cart}
-            quantities={quantities}
-            setQuantities={setQuantities}
-            onAddToCart={addToCart}
-            onImageClick={(src, alt) => setLightbox({ src, alt })}
-            showPrices={showPrices}
-          />
         ) : onCategoryPage ? (
           <ProductGrid
             products={categoryProducts}
@@ -598,30 +728,33 @@ export default function CatalogView({
             onAddToCart={addToCart}
             onImageClick={(src, alt) => setLightbox({ src, alt })}
             showPrices={showPrices}
+            discountPercent={discountPercent}
+            t={t}
+            locale={locale}
           />
         ) : (
-          <div className="space-y-2">
-            <p className="px-1 text-sm text-gray-600">בחר קטגוריה:</p>
+          <div className="space-y-1.5">
+            <p className="px-0.5 text-xs text-gray-600">{t.pickCategory}</p>
             {categories.map((category) => (
               <button
                 key={category.id}
                 type="button"
                 onClick={() => openCategory(category.id)}
-                className="flex w-full items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-4 text-right shadow-sm transition active:border-emerald-300 active:bg-emerald-50"
+                className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-start shadow-sm transition active:border-emerald-300 active:bg-emerald-50"
               >
                 <div className="min-w-0 flex-1">
-                  <h3 className="text-base font-bold text-gray-900">
+                  <h3 className="text-sm font-bold text-gray-900">
                     {category.name}
                   </h3>
-                  <p className="mt-0.5 text-sm text-gray-500">
-                    {category.products.length} מוצרים
+                  <p className="text-xs text-gray-500">
+                    {category.products.length} {t.productsCount}
                   </p>
                 </div>
                 <span
-                  className="mr-3 shrink-0 text-xl text-emerald-600"
+                  className="ms-3 shrink-0 text-xl text-emerald-600"
                   aria-hidden="true"
                 >
-                  ‹
+                  {locale === "he" ? "‹" : "›"}
                 </span>
               </button>
             ))}
@@ -629,36 +762,36 @@ export default function CatalogView({
         )}
       </main>
 
-      <footer className="fixed bottom-0 left-0 right-0 z-20 border-t border-gray-200 bg-white p-3 shadow-[0_-4px_16px_rgba(0,0,0,0.06)]">
-        <div className="mx-auto max-w-lg space-y-2">
+      <footer className="fixed bottom-0 left-0 right-0 z-20 border-t border-gray-200 bg-white p-2 shadow-[0_-4px_16px_rgba(0,0,0,0.06)]">
+        <div className="mx-auto max-w-lg space-y-1.5">
           <input
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            placeholder="הערות (אופציונלי)"
-            className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm"
+            placeholder={t.notesOptional}
+            className="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs"
           />
-          <div className="flex flex-col gap-2">
+          <div className="grid grid-cols-2 gap-1.5">
             <button
               type="button"
               onClick={sendOrderViaWhatsApp}
               disabled={cartItems.length === 0}
-              className={`w-full rounded-xl px-3 py-3 text-sm font-bold text-white ${
+              className={`rounded-lg px-2 py-2 text-xs font-bold text-white ${
                 cartItems.length > 0 ? "bg-green-600" : "bg-gray-400"
               }`}
             >
-              שלח הזמנה בווצאפ
+              {t.sendWhatsAppOrder}
             </button>
             <button
               type="button"
               onClick={sendOrderViaEmail}
               disabled={cartItems.length === 0}
-              className={`w-full rounded-xl border px-3 py-3 text-sm font-bold ${
+              className={`rounded-lg border px-2 py-2 text-xs font-bold ${
                 cartItems.length > 0
                   ? "border-emerald-600 text-emerald-800"
                   : "border-gray-300 text-gray-400"
               }`}
             >
-              שלח הזמנה במייל
+              {t.sendEmailOrder}
             </button>
           </div>
         </div>
@@ -674,27 +807,33 @@ export default function CatalogView({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex shrink-0 items-center justify-between border-b border-gray-100 p-4">
-              <h2 className="text-lg font-bold">עגלת קניות ({cartCount})</h2>
+              <h2 className="text-lg font-bold">
+                {t.cartTitle} ({cartCount})
+              </h2>
               <button
                 type="button"
                 onClick={() => setCartOpen(false)}
                 className="text-gray-500"
               >
-                סגור
+                {t.close}
               </button>
             </div>
 
             {cartItems.length === 0 ? (
-              <p className="py-8 text-center text-gray-500">העגלה ריקה</p>
+              <p className="py-8 text-center text-gray-500">{t.cartEmpty}</p>
             ) : (
               <>
                 <ul className="flex-1 space-y-4 overflow-y-auto p-4">
                   {cartItems.map((item) => {
                     const product = skuToProduct.get(item.sku);
-                    const lineTotal =
-                      product?.price && product.price > 0
-                        ? product.price * item.quantity
+                    const basePrice =
+                      product?.price && product.price > 0 ? product.price : null;
+                    const saleUnit =
+                      basePrice !== null
+                        ? unitPrice(basePrice, discountPercent)
                         : null;
+                    const lineTotal =
+                      saleUnit !== null ? saleUnit * item.quantity : null;
 
                     return (
                       <li
@@ -713,7 +852,7 @@ export default function CatalogView({
                             />
                           ) : (
                             <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-gray-100 text-xs text-gray-500">
-                              אין תמונה
+                              {t.noImage}
                             </div>
                           )}
                           <div className="min-w-0 flex-1">
@@ -721,16 +860,34 @@ export default function CatalogView({
                               {product?.name ?? item.sku}
                             </p>
                             <p className="mt-1 text-xs text-gray-500">
-                              מק&quot;ט: {item.sku}
+                              {t.sku}: {item.sku}
                             </p>
                             {(showPrices || lineTotal !== null) &&
-                              lineTotal !== null && (
-                              <p className="mt-1 text-sm font-semibold text-emerald-700">
-                                {formatPrice(lineTotal)}
-                                {item.quantity > 1 && product?.price
-                                  ? ` (${formatPrice(product.price)} × ${item.quantity})`
-                                  : null}
-                              </p>
+                              lineTotal !== null &&
+                              saleUnit !== null &&
+                              basePrice !== null && (
+                              <div className="mt-1">
+                                {discountPercent > 0 && saleUnit < basePrice ? (
+                                  <>
+                                    <p className="text-xs text-gray-400 line-through">
+                                      {formatPrice(basePrice * item.quantity, locale)}
+                                    </p>
+                                    <p className="text-sm font-semibold text-emerald-700">
+                                      {formatPrice(lineTotal, locale)}
+                                      {item.quantity > 1
+                                        ? ` (${formatPrice(saleUnit, locale)} × ${item.quantity})`
+                                        : null}
+                                    </p>
+                                  </>
+                                ) : (
+                                  <p className="text-sm font-semibold text-emerald-700">
+                                    {formatPrice(lineTotal, locale)}
+                                    {item.quantity > 1
+                                      ? ` (${formatPrice(saleUnit, locale)} × ${item.quantity})`
+                                      : null}
+                                  </p>
+                                )}
+                              </div>
                             )}
                           </div>
                         </div>
@@ -741,13 +898,14 @@ export default function CatalogView({
                             onChange={(qty) =>
                               updateCartQuantity(item.sku, qty)
                             }
+                            t={t}
                           />
                           <button
                             type="button"
                             onClick={() => removeFromCart(item.sku)}
                             className="rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600"
                           >
-                            הסר לגמרי
+                            {t.removeAll}
                           </button>
                         </div>
                       </li>
@@ -755,13 +913,27 @@ export default function CatalogView({
                   })}
                 </ul>
 
-                {cartTotal > 0 && (
+                {orderTotal > 0 && (
                   <div className="shrink-0 border-t border-gray-200 bg-white px-4 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)]">
-                    <div className="flex items-center justify-between rounded-xl bg-emerald-50 px-4 py-3">
-                      <span className="font-bold text-gray-900">סה״כ לתשלום</span>
-                      <span className="text-lg font-bold text-emerald-800">
-                        {formatPrice(cartTotal)}
-                      </span>
+                    <div className="space-y-2 rounded-xl bg-emerald-50 px-4 py-3">
+                      {deliveryFee > 0 && (
+                        <>
+                          <div className="flex items-center justify-between text-sm text-gray-700">
+                            <span>{t.productsSubtotal}</span>
+                            <span>{formatPrice(cartSubtotal, locale)}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-sm text-gray-700">
+                            <span>{t.deliveryFee}</span>
+                            <span>{formatPrice(deliveryFee, locale)}</span>
+                          </div>
+                        </>
+                      )}
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-gray-900">{t.totalPayment}</span>
+                        <span className="text-lg font-bold text-emerald-800">
+                          {formatPrice(orderTotal, locale)}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -781,7 +953,7 @@ export default function CatalogView({
             className="absolute left-4 top-4 rounded-full bg-white/20 px-3 py-1 text-white"
             onClick={() => setLightbox(null)}
           >
-            סגור
+            {t.close}
           </button>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img

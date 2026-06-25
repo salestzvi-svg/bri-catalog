@@ -48,7 +48,6 @@ export function getCustomerLinks(host: string | null) {
 
   return {
     publicLink: publicBase ? buildCustomerLoginUrl(publicBase) : null,
-    publicLinkB: publicBase ? buildCustomerLoginUrl(`${publicBase}/b`) : null,
     localLink: localIp
       ? buildCustomerLoginUrl(`http://${localIp}:${port}`)
       : null,

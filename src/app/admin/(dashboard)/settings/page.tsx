@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import AnnouncementManager from "@/components/AnnouncementManager";
+import ExcelProductImportCard from "@/components/ExcelProductImportCard";
 import RegularAdminPasswordCard from "@/components/RegularAdminPasswordCard";
 
 export default function SettingsPage() {
@@ -22,6 +23,7 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-6">
+      <ExcelProductImportCard />
       <AnnouncementManager />
       {isSuperAdmin && <RegularAdminPasswordCard />}
     </div>

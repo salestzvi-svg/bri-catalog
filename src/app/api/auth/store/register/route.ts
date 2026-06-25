@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { hashPassword, setSession } from "@/lib/auth";
+import { DEFAULT_STORE_USERNAME, storeNameExists } from "@/lib/store-auth";
+import { insertStore } from "@/lib/store-channels";
 
 export async function POST(request: Request) {
   try {
-    const { storeName, username, password } = await request.json();
+    const { storeName, password } = await request.json();
 
-    if (!storeName?.trim() || !username?.trim() || !password?.trim()) {
+    if (!storeName?.trim() || !password?.trim()) {
       return NextResponse.json(
-        { error: "יש למלא שם חנות, שם משתמש וסיסמה" },
+        { error: "יש למלא שם חנות וסיסמה" },
         { status: 400 },
       );
     }
@@ -21,22 +23,25 @@ export async function POST(request: Request) {
     }
 
     const supabase = createAdminClient();
-    const passwordHash = await hashPassword(password);
+    const trimmedStore = storeName.trim();
 
-    const { data, error } = await supabase
-      .from("stores")
-      .insert({
-        store_name: storeName.trim(),
-        username: username.trim(),
-        password_hash: passwordHash,
-      })
-      .select("id, store_name, username")
-      .single();
+    if (await storeNameExists(supabase, trimmedStore)) {
+      return NextResponse.json(
+        { error: "שם החנות כבר קיים. נסה להתחבר." },
+        { status: 409 },
+      );
+    }
+
+    const { data, error } = await insertStore(supabase, {
+      store_name: trimmedStore,
+      username: DEFAULT_STORE_USERNAME,
+      password_hash: await hashPassword(password),
+    });
 
     if (error) {
       if (error.code === "23505") {
         return NextResponse.json(
-          { error: "שם החנות ושם המשתמש כבר קיימים. נסה להתחבר." },
+          { error: "שם החנות כבר קיים. נסה להתחבר." },
           { status: 409 },
         );
       }
@@ -53,7 +58,6 @@ export async function POST(request: Request) {
     return NextResponse.json({
       success: true,
       storeName: data.store_name,
-      username: data.username,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "שגיאה בהרשמה";

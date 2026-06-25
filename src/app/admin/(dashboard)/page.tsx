@@ -342,21 +342,13 @@ export default function AdminCatalogPage() {
     }
   }
 
-  async function linkVariantFamily(itemId: number, targetQuery: string) {
-    const query = targetQuery.trim().toLowerCase();
-    if (!query) {
-      setError("הזן מק״ט או שם מוצר לחיבור");
+  async function linkVariantFamily(itemId: number, targetItemId: number) {
+    if (itemId === targetItemId) {
+      setError("לא ניתן לחבר מוצר לעצמו");
       return;
     }
 
-    const target = products.find(
-      (product) =>
-        product.itemId !== itemId &&
-        (product.sku.toLowerCase() === query ||
-          product.sku.toLowerCase().includes(query) ||
-          product.name.toLowerCase().includes(query)),
-    );
-
+    const target = products.find((product) => product.itemId === targetItemId);
     if (!target) {
       setError("מוצר לחיבור לא נמצא");
       return;
@@ -368,7 +360,7 @@ export default function AdminCatalogPage() {
     const response = await fetch("/api/admin/products", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ itemId, linkToItemId: target.itemId }),
+      body: JSON.stringify({ itemId, linkToItemId: targetItemId }),
     });
     const data = await response.json();
 
@@ -944,8 +936,9 @@ export default function AdminCatalogPage() {
                   variantSiblings={
                     variantSiblingsByItemId.get(product.itemId) ?? []
                   }
-                  onLinkVariant={(targetQuery) =>
-                    linkVariantFamily(product.itemId, targetQuery)
+                  linkCatalogProducts={products}
+                  onLinkVariant={(targetItemId) =>
+                    linkVariantFamily(product.itemId, targetItemId)
                   }
                   onUnlinkVariant={() => unlinkVariantFamily(product.itemId)}
                 />
@@ -1233,6 +1226,7 @@ function ProductCard({
   onSaveSortOrder,
   onSaveLabels,
   variantSiblings,
+  linkCatalogProducts,
   onLinkVariant,
   onUnlinkVariant,
 }: {
@@ -1249,7 +1243,8 @@ function ProductCard({
   onSaveSortOrder: (sortInput: string) => void;
   onSaveLabels: (labelIds: string[]) => void;
   variantSiblings: AdminProduct[];
-  onLinkVariant: (targetQuery: string) => void;
+  linkCatalogProducts: AdminProduct[];
+  onLinkVariant: (targetItemId: number) => void;
   onUnlinkVariant: () => void;
 }) {
   const fileInputId = `product-image-${product.itemId}`;
@@ -1261,6 +1256,29 @@ function ProductCard({
   );
   const [linkInput, setLinkInput] = useState("");
   const saveSortOrderRef = useRef(onSaveSortOrder);
+  const familyCount = product.variantGroupId ? variantSiblings.length + 1 : 0;
+
+  const linkPreview = useMemo(() => {
+    const query = linkInput.trim().toLowerCase();
+    if (!query) return null;
+
+    const others = linkCatalogProducts.filter((p) => p.itemId !== product.itemId);
+    const exactSku = others.find((p) => p.sku.toLowerCase() === query);
+    if (exactSku) return exactSku;
+
+    const skuStarts = others.find((p) => p.sku.toLowerCase().startsWith(query));
+    if (skuStarts) return skuStarts;
+
+    const skuIncludes = others.find((p) => p.sku.toLowerCase().includes(query));
+    if (skuIncludes) return skuIncludes;
+
+    return others.find((p) => p.name.toLowerCase().includes(query)) ?? null;
+  }, [linkInput, linkCatalogProducts, product.itemId]);
+
+  const familyMembers = useMemo(() => {
+    if (!product.variantGroupId) return [];
+    return [product, ...variantSiblings];
+  }, [product, variantSiblings]);
 
   useEffect(() => {
     saveSortOrderRef.current = onSaveSortOrder;
@@ -1306,7 +1324,13 @@ function ProductCard({
     <article
       className={`flex flex-col rounded-2xl border bg-white p-3 shadow-sm ${
         isSaving ? "opacity-60" : ""
-      } ${product.categoryId ? "border-emerald-200" : "border-gray-200"}`}
+      } ${
+        product.variantGroupId
+          ? "border-violet-300 ring-2 ring-violet-200"
+          : product.categoryId
+            ? "border-emerald-200"
+            : "border-gray-200"
+      }`}
     >
       {product.image ? (
         // eslint-disable-next-line @next/next/no-img-element
@@ -1325,6 +1349,11 @@ function ProductCard({
       <h4 className="mt-2 line-clamp-2 min-h-[2.5rem] text-sm font-semibold text-gray-900">
         {product.name}
       </h4>
+      {familyCount > 1 && (
+        <span className="mt-1 inline-flex w-fit items-center rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-semibold text-violet-800">
+          משפחת שפות · {familyCount} מוצרים
+        </span>
+      )}
       <p className="mt-1 text-xs text-gray-500">מק&quot;ט: {product.sku}</p>
 
       {showCategoryTools && (
@@ -1418,46 +1447,112 @@ function ProductCard({
 
       <div className="mt-2 rounded-xl border border-violet-200 bg-violet-50 p-2">
         <p className="text-xs font-medium text-violet-900">משפחת שפות</p>
-        {variantSiblings.length > 0 ? (
-          <ul className="mt-1 space-y-0.5 text-[11px] text-violet-900">
-            {variantSiblings.map((sibling) => (
-              <li key={sibling.itemId} className="truncate">
-                {sibling.name} ({sibling.sku})
-              </li>
-            ))}
-          </ul>
+        <p className="text-[10px] text-violet-700">
+          אותו ספר בשפות שונות — חיפוש לפי מק״ט מציג תצוגה מקדימה לפני חיבור
+        </p>
+
+        {familyMembers.length > 0 ? (
+          <div className="mt-2 space-y-1.5">
+            <p className="text-[11px] font-medium text-violet-900">
+              מחוברים למשפחה ({familyMembers.length})
+            </p>
+            <ul className="space-y-1.5">
+              {familyMembers.map((member) => (
+                <li
+                  key={member.itemId}
+                  className={`flex items-center gap-2 rounded-lg border bg-white p-1.5 ${
+                    member.itemId === product.itemId
+                      ? "border-violet-400"
+                      : "border-violet-100"
+                  }`}
+                >
+                  {member.image ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={member.image}
+                      alt={member.name}
+                      className="h-10 w-10 shrink-0 rounded-md object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-gray-100 text-[9px] text-gray-500">
+                      אין
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[11px] font-medium text-violet-950">
+                      {member.name}
+                      {member.itemId === product.itemId ? " (זה)" : ""}
+                    </p>
+                    <p className="text-[10px] text-violet-700">מק״ט {member.sku}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
         ) : (
-          <p className="mt-1 text-[11px] text-violet-800">לא מחובר למשפחה</p>
+          <p className="mt-1 text-[11px] text-violet-800">עדיין לא מחובר למשפחה</p>
         )}
-        <div className="mt-1.5 flex gap-1">
+
+        <div className="mt-2">
           <input
             type="text"
             value={linkInput}
             disabled={isSaving}
             onChange={(e) => setLinkInput(e.target.value)}
-            placeholder="מק״ט או שם מוצר"
-            className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs"
+            placeholder="הקלד מק״ט לחיבור…"
+            className="w-full rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs"
           />
-          <button
-            type="button"
-            disabled={isSaving}
-            onClick={() => {
-              onLinkVariant(linkInput);
-              setLinkInput("");
-            }}
-            className="shrink-0 rounded-lg bg-violet-600 px-2 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
-          >
-            חבר
-          </button>
         </div>
+
+        {linkInput.trim() && !linkPreview && (
+          <p className="mt-1.5 text-[11px] text-red-700">לא נמצא מוצר עם מק״ט/שם כזה</p>
+        )}
+
+        {linkPreview && (
+          <div className="mt-1.5 rounded-lg border border-violet-300 bg-white p-2">
+            <p className="text-[10px] font-medium text-violet-800">נמצא לחיבור:</p>
+            <div className="mt-1 flex items-center gap-2">
+              {linkPreview.image ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={linkPreview.image}
+                  alt={linkPreview.name}
+                  className="h-12 w-12 shrink-0 rounded-md object-cover"
+                />
+              ) : (
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-gray-100 text-[9px] text-gray-500">
+                  אין תמונה
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="line-clamp-2 text-xs font-semibold text-gray-900">
+                  {linkPreview.name}
+                </p>
+                <p className="text-[10px] text-gray-600">מק״ט {linkPreview.sku}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={isSaving}
+              onClick={() => {
+                onLinkVariant(linkPreview.itemId);
+                setLinkInput("");
+              }}
+              className="mt-2 w-full rounded-lg bg-violet-600 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+            >
+              חבר למשפחה עם המוצר הזה
+            </button>
+          </div>
+        )}
+
         {product.variantGroupId && (
           <button
             type="button"
             disabled={isSaving}
             onClick={onUnlinkVariant}
-            className="mt-1.5 w-full rounded-lg border border-violet-300 py-1 text-[11px] font-medium text-violet-900 disabled:opacity-60"
+            className="mt-2 w-full rounded-lg border border-violet-300 py-1 text-[11px] font-medium text-violet-900 disabled:opacity-60"
           >
-            הסר ממשפחה
+            הסר רק את המוצר הזה מהמשפחה
           </button>
         )}
       </div>

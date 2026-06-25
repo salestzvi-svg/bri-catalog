@@ -443,7 +443,11 @@ export async function PUT(request: Request) {
     }
 
     revalidateTag(CATALOG_CACHE_TAG, "max");
-    return NextResponse.json({ success: true });
+    const savedAliases =
+      searchAliases !== undefined
+        ? String(searchAliases).trim() || ""
+        : (existingOverride?.search_aliases ?? "");
+    return NextResponse.json({ success: true, searchAliases: savedAliases });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "שגיאה בעדכון" },

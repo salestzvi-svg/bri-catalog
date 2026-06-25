@@ -56,6 +56,7 @@ export interface Store {
   username: string;
   created_at: string;
   discount_percent?: number;
+  discount_applies_to_custom_prices?: boolean;
   signup_channel?: WhatsAppChannel;
   last_login_channel?: WhatsAppChannel;
 }

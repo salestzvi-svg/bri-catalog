@@ -406,36 +406,67 @@ export default function AdminCatalogPage() {
     });
   }
 
-  async function saveProductSearchAliases(itemId: number, searchAliases: string) {
+  async function saveProductSearchAliases(
+    itemId: number,
+    searchAliases: string,
+  ): Promise<boolean> {
     const normalized = searchAliases.trim();
     const current = products.find((p) => p.itemId === itemId);
     if ((current?.searchAliases ?? "").trim() === normalized) {
-      return;
+      setMessage("שמות החיפוש כבר שמורים");
+      return true;
     }
 
+    setSavingIds((prev) => new Set(prev).add(itemId));
     setError("");
+    setMessage("");
 
     const response = await fetch("/api/admin/products", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         itemId,
-        searchAliases: normalized || null,
+        searchAliases: normalized,
       }),
     });
     const data = await response.json();
 
+    setSavingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(itemId);
+      return next;
+    });
+
     if (response.ok) {
+      const saved = String(data.searchAliases ?? normalized);
       setProducts((prev) =>
         prev.map((product) =>
           product.itemId === itemId
-            ? { ...product, searchAliases: normalized }
+            ? { ...product, searchAliases: saved }
             : product,
         ),
       );
-    } else {
-      setError(data.error || "שגיאה בשמירת שמות חיפוש");
+      setMessage(
+        saved
+          ? `שמות חיפוש נשמרו: ${productDisplayName(itemId)}`
+          : "שמות החיפוש נמחקו",
+      );
+      return true;
     }
+
+    const err = data.error || "שגיאה בשמירת שמות חיפוש";
+    if (/search_aliases/i.test(err)) {
+      setError(
+        "עמודת שמות החיפוש חסרה ב-Supabase — הרץ את migration-product-search-aliases.sql",
+      );
+    } else {
+      setError(err);
+    }
+    return false;
+  }
+
+  function productDisplayName(itemId: number) {
+    return products.find((p) => p.itemId === itemId)?.name ?? "מוצר";
   }
 
   async function saveProductSortOrder(itemId: number, sortInput: string) {
@@ -1288,7 +1319,7 @@ function ProductCard({
   linkCatalogProducts: AdminProduct[];
   onLinkVariant: (targetItemId: number) => void;
   onUnlinkVariant: () => void;
-  onSaveSearchAliases: (value: string) => void;
+  onSaveSearchAliases: (value: string) => Promise<boolean>;
 }) {
   const fileInputId = `product-image-${product.itemId}`;
   const [priceInput, setPriceInput] = useState(
@@ -1301,8 +1332,8 @@ function ProductCard({
   const [searchAliasesInput, setSearchAliasesInput] = useState(
     product.searchAliases ?? "",
   );
+  const [aliasesSaved, setAliasesSaved] = useState(false);
   const saveSortOrderRef = useRef(onSaveSortOrder);
-  const saveSearchAliasesRef = useRef(onSaveSearchAliases);
   const familyCount = product.variantGroupId ? variantSiblings.length + 1 : 0;
 
   const linkPreview = useMemo(
@@ -1320,24 +1351,9 @@ function ProductCard({
   }, [onSaveSortOrder]);
 
   useEffect(() => {
-    saveSearchAliasesRef.current = onSaveSearchAliases;
-  }, [onSaveSearchAliases]);
-
-  useEffect(() => {
     setSearchAliasesInput(product.searchAliases ?? "");
-  }, [product.itemId]);
-
-  useEffect(() => {
-    const serverValue = (product.searchAliases ?? "").trim();
-    const draft = searchAliasesInput.trim();
-    if (draft === serverValue) return;
-
-    const timer = window.setTimeout(() => {
-      saveSearchAliasesRef.current(searchAliasesInput);
-    }, 600);
-
-    return () => window.clearTimeout(timer);
-  }, [searchAliasesInput, product.searchAliases, product.itemId]);
+    setAliasesSaved(false);
+  }, [product.itemId, product.searchAliases]);
 
   useEffect(() => {
     setPriceInput(product.price > 0 ? String(product.price) : "");
@@ -1366,6 +1382,18 @@ function ProductCard({
 
     return () => window.clearTimeout(timer);
   }, [sortInput, product.sortOrder, product.itemId]);
+
+  const aliasesDirty =
+    searchAliasesInput.trim() !== (product.searchAliases ?? "").trim();
+
+  async function saveSearchAliases() {
+    setAliasesSaved(false);
+    const ok = await onSaveSearchAliases(searchAliasesInput);
+    if (ok) {
+      setAliasesSaved(true);
+      window.setTimeout(() => setAliasesSaved(false), 3000);
+    }
+  }
 
   function toggleLabel(labelId: string) {
     const current = product.labelIds ?? [];
@@ -1419,14 +1447,35 @@ function ProductCard({
         <textarea
           value={searchAliasesInput}
           disabled={isSaving}
-          onChange={(e) => setSearchAliasesInput(e.target.value)}
+          onChange={(e) => {
+            setSearchAliasesInput(e.target.value);
+            setAliasesSaved(false);
+          }}
           placeholder={'למשל:\nעלים לתרופה'}
           rows={2}
           className="mt-1 w-full resize-y rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs leading-snug"
         />
+        <div className="mt-1.5 flex items-center gap-2">
+          <button
+            type="button"
+            disabled={isSaving || !aliasesDirty}
+            onClick={() => void saveSearchAliases()}
+            className="rounded-lg bg-amber-600 px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50"
+          >
+            {isSaving ? "שומר..." : "שמור"}
+          </button>
+          {aliasesSaved && !aliasesDirty && (
+            <span className="text-[11px] font-semibold text-emerald-700">
+              ✓ נשמר
+            </span>
+          )}
+          {(product.searchAliases ?? "").trim() && !aliasesDirty && !aliasesSaved && (
+            <span className="text-[10px] text-amber-800">שמור בשרת</span>
+          )}
+        </div>
         {parseSearchAliases(searchAliasesInput).length > 0 && (
           <p className="mt-1 text-[10px] text-amber-900">
-            נשמר אוטומטית · {parseSearchAliases(searchAliasesInput).length} שמות
+            {parseSearchAliases(searchAliasesInput).length} שמות לחיפוש
           </p>
         )}
       </div>

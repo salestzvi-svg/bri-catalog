@@ -118,7 +118,7 @@ export async function listStores(supabase: SupabaseClient) {
 
     const storesResult = await supabase
       .from("stores")
-      .select("id, store_name, username, created_at, discount_percent")
+      .select("id, store_name, username, created_at, discount_percent, discount_applies_to_custom_prices")
       .order("created_at", { ascending: false });
 
     if (storesResult.error && isMissingColumn(storesResult.error)) {
@@ -154,6 +154,9 @@ export async function listStores(supabase: SupabaseClient) {
       return {
         ...store,
         discount_percent: Number(store.discount_percent ?? 0),
+        discount_applies_to_custom_prices: Boolean(
+          store.discount_applies_to_custom_prices,
+        ),
         signup_channel: (tracking?.signup_channel ?? "default") as WhatsAppChannel,
         last_login_channel: (tracking?.last_login_channel ??
           "default") as WhatsAppChannel,

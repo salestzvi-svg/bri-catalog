@@ -4,6 +4,7 @@ import CatalogView from "@/components/CatalogView";
 import AnnouncementPopup from "@/components/AnnouncementPopup";
 import { useStoreLocale } from "@/hooks/useStoreLocale";
 import type { CatalogProduct, Category, CategoryLabel, WhatsAppChannel } from "@/lib/types";
+import type { StorePricingContext } from "@/lib/store-pricing";
 import { getWhatsAppNumber } from "@/lib/whatsapp";
 
 export default function CatalogLoader({
@@ -13,7 +14,7 @@ export default function CatalogLoader({
   initialCategoryLabels = [],
   whatsappChannel = "default",
   initialError = "",
-  discountPercent = 0,
+  storePricing,
 }: {
   storeName: string;
   initialProducts: CatalogProduct[];
@@ -21,7 +22,7 @@ export default function CatalogLoader({
   initialCategoryLabels?: CategoryLabel[];
   whatsappChannel?: WhatsAppChannel;
   initialError?: string;
-  discountPercent?: number;
+  storePricing: StorePricingContext;
 }) {
   const { t, dir, locale, toggleLocale } = useStoreLocale();
 
@@ -40,7 +41,8 @@ export default function CatalogLoader({
         initialCategoryLabels={initialCategoryLabels}
         whatsappNumber={getWhatsAppNumber(whatsappChannel)}
         whatsappChannel={whatsappChannel}
-        discountPercent={discountPercent}
+        discountPercent={storePricing.discountPercent}
+        storePricing={storePricing}
         t={t}
         locale={locale}
         onToggleLocale={toggleLocale}

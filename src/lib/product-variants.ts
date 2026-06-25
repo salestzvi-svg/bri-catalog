@@ -183,3 +183,10 @@ export function findProductForFamilyLink<
     }) ?? null
   );
 }
+
+/** חיפוש מוצר לפי שם, מק"ט או שם נסתר — ללא סינון מוצר נוכחי */
+export function findProductByAdminQuery<
+  T extends { itemId: number; sku: string; name: string; searchAliases?: string | null },
+>(products: T[], query: string): T | null {
+  return findProductForFamilyLink(products, -1, query);
+}

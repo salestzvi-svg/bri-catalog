@@ -3,6 +3,10 @@ import CatalogLoader from "@/components/CatalogLoader";
 import { createAdminClient } from "@/lib/supabase/server";
 import { requireStoreSession } from "@/lib/auth";
 import { getCachedCatalogProducts, getCachedStorefrontCategories, getCachedCategoryLabels } from "@/lib/catalog";
+import {
+  emptyStorePricingContext,
+  loadStorePricingContext,
+} from "@/lib/store-pricing";
 import type { CatalogProduct, Category, CategoryLabel, WhatsAppChannel } from "@/lib/types";
 
 export default async function CatalogPage() {
@@ -15,7 +19,7 @@ export default async function CatalogPage() {
   let categories: Category[] = [];
   let categoryLabels: CategoryLabel[] = [];
   let loadError = "";
-  let discountPercent = 0;
+  let storePricing = emptyStorePricingContext();
 
   try {
     [products, categories, categoryLabels] = await Promise.all([
@@ -25,14 +29,7 @@ export default async function CatalogPage() {
     ]);
     if (session.storeId) {
       const supabase = createAdminClient();
-      const { data: store, error } = await supabase
-        .from("stores")
-        .select("discount_percent")
-        .eq("id", session.storeId)
-        .maybeSingle();
-      if (!error) {
-        discountPercent = Number(store?.discount_percent ?? 0);
-      }
+      storePricing = await loadStorePricingContext(supabase, session.storeId);
     }
   } catch (error) {
     loadError =
@@ -47,7 +44,7 @@ export default async function CatalogPage() {
       initialCategoryLabels={categoryLabels}
       whatsappChannel={(session.whatsappChannel ?? "default") as WhatsAppChannel}
       initialError={loadError}
-      discountPercent={discountPercent}
+      storePricing={storePricing}
     />
   );
 }

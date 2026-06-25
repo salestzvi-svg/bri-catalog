@@ -101,7 +101,8 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "לא מורשה" }, { status: 401 });
   }
 
-  const { id, password, storeName, discountPercent } = await request.json();
+  const { id, password, storeName, discountPercent, discountAppliesToCustomPrices } =
+    await request.json();
   if (!id) {
     return NextResponse.json({ error: "חסר מזהה חנות" }, { status: 400 });
   }
@@ -137,6 +138,12 @@ export async function PATCH(request: Request) {
     updates.discount_percent = discount;
   }
 
+  if (discountAppliesToCustomPrices !== undefined) {
+    updates.discount_applies_to_custom_prices = Boolean(
+      discountAppliesToCustomPrices,
+    );
+  }
+
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: "אין מה לעדכן" }, { status: 400 });
   }
@@ -146,7 +153,7 @@ export async function PATCH(request: Request) {
     .from("stores")
     .update(updates)
     .eq("id", id)
-    .select("id, store_name, username, discount_percent")
+    .select("id, store_name, username, discount_percent, discount_applies_to_custom_prices")
     .single();
 
   if (error) {

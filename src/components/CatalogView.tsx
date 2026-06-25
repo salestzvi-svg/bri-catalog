@@ -10,7 +10,11 @@ import {
   getOrderEmail,
   type WhatsAppChannel,
 } from "@/lib/whatsapp";
-import { applyDiscount, type StoreUiStrings } from "@/lib/i18n/store-ui";
+import { type StoreUiStrings } from "@/lib/i18n/store-ui";
+import {
+  resolveStoreUnitPrice,
+  type StorePricingContext,
+} from "@/lib/store-pricing";
 import {
   calculateDeliveryFee,
   calculateOrderTotal,
@@ -45,40 +49,51 @@ function formatPrice(price: number, locale: "he" | "en" = "he") {
   }).format(price);
 }
 
-function unitPrice(price: number, discountPercent: number) {
-  return applyDiscount(price, discountPercent);
+function unitPriceForProduct(
+  product: CatalogProduct,
+  storePricing: StorePricingContext,
+) {
+  return resolveStoreUnitPrice(
+    product.price,
+    product.itemId,
+    storePricing,
+  ).unitPrice;
 }
 
 function ProductPrice({
-  price,
-  discountPercent,
+  product,
+  storePricing,
   showPrices,
   locale,
   compact = false,
 }: {
-  price: number;
-  discountPercent: number;
+  product: CatalogProduct;
+  storePricing: StorePricingContext;
   showPrices: boolean;
   locale: "he" | "en";
   compact?: boolean;
 }) {
-  if (!showPrices || !price || price <= 0) return null;
-  const sale = unitPrice(price, discountPercent);
-  if (discountPercent > 0 && sale < price) {
+  if (!showPrices || !product.price || product.price <= 0) return null;
+  const resolved = resolveStoreUnitPrice(
+    product.price,
+    product.itemId,
+    storePricing,
+  );
+  if (resolved.showStrike) {
     return (
       <div className={compact ? "mt-0.5" : "mt-1"}>
         <p className={`text-gray-400 line-through ${compact ? "text-[10px]" : "text-xs"}`}>
-          {formatPrice(price, locale)}
+          {formatPrice(resolved.compareAtPrice, locale)}
         </p>
         <p className={`font-bold text-emerald-800 ${compact ? "text-[11px]" : "text-sm"}`}>
-          {formatPrice(sale, locale)}
+          {formatPrice(resolved.unitPrice, locale)}
         </p>
       </div>
     );
   }
   return (
     <p className={`font-bold text-emerald-800 ${compact ? "mt-0.5 text-[11px]" : "mt-1 text-sm"}`}>
-      {formatPrice(price, locale)}
+      {formatPrice(resolved.unitPrice, locale)}
     </p>
   );
 }
@@ -167,7 +182,7 @@ function ProductGrid({
   onAddToCart,
   onImageClick,
   showPrices,
-  discountPercent,
+  storePricing,
   t,
   locale,
 }: {
@@ -180,7 +195,7 @@ function ProductGrid({
   onAddToCart: (product: CatalogProduct) => void;
   onImageClick: (src: string, alt: string) => void;
   showPrices: boolean;
-  discountPercent: number;
+  storePricing: StorePricingContext;
   t: StoreUiStrings;
   locale: "he" | "en";
 }) {
@@ -237,8 +252,8 @@ function ProductGrid({
               {product.name}
             </h3>
             <ProductPrice
-              price={product.price}
-              discountPercent={discountPercent}
+              product={product}
+              storePricing={storePricing}
               showPrices={showPrices}
               locale={locale}
               compact
@@ -279,6 +294,7 @@ export default function CatalogView({
   whatsappNumber,
   whatsappChannel = "default",
   discountPercent = 0,
+  storePricing,
   t,
   locale,
   onToggleLocale,
@@ -290,11 +306,14 @@ export default function CatalogView({
   whatsappNumber: string;
   whatsappChannel?: WhatsAppChannel;
   discountPercent?: number;
+  storePricing: StorePricingContext;
   t: StoreUiStrings;
   locale: "he" | "en";
   onToggleLocale: () => void;
 }) {
   const SHOW_PRICES_KEY = "catalog_show_prices";
+  const pricing = storePricing;
+  const effectiveDiscountPercent = pricing.discountPercent || discountPercent;
   const [products] = useState(initialProducts);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(
     null,
@@ -438,9 +457,9 @@ export default function CatalogView({
     return cartItems.reduce((sum, item) => {
       const product = skuToProduct.get(item.sku);
       if (!product?.price || product.price <= 0) return sum;
-      return sum + unitPrice(product.price, discountPercent) * item.quantity;
+      return sum + unitPriceForProduct(product, pricing) * item.quantity;
     }, 0);
-  }, [cartItems, skuToProduct, discountPercent]);
+  }, [cartItems, skuToProduct, pricing]);
 
   const cartSubtotalBeforeDiscount = useMemo(() => {
     return cartItems.reduce((sum, item) => {
@@ -484,7 +503,7 @@ export default function CatalogView({
       const product = skuToProduct.get(item.sku);
       const unit =
         product?.price && product.price > 0
-          ? unitPrice(product.price, discountPercent)
+          ? unitPriceForProduct(product, pricing)
           : null;
       const lineTotal =
         unit !== null ? unit * item.quantity : null;
@@ -596,9 +615,9 @@ export default function CatalogView({
             <h1 className="truncate text-base font-bold text-emerald-800">
               {storeName}
             </h1>
-            {discountPercent > 0 && (
+            {effectiveDiscountPercent > 0 && (
               <span className="mt-0.5 inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900">
-                {t.yourDiscount}: {discountPercent}%
+                {t.yourDiscount}: {effectiveDiscountPercent}%
               </span>
             )}
             {browsingProducts && (
@@ -745,7 +764,7 @@ export default function CatalogView({
             onAddToCart={addToCart}
             onImageClick={(src, alt) => setLightbox({ src, alt })}
             showPrices={showPrices}
-            discountPercent={discountPercent}
+            storePricing={pricing}
             t={t}
             locale={locale}
           />
@@ -843,12 +862,15 @@ export default function CatalogView({
                 <ul className="flex-1 space-y-4 overflow-y-auto p-4">
                   {cartItems.map((item) => {
                     const product = skuToProduct.get(item.sku);
-                    const basePrice =
-                      product?.price && product.price > 0 ? product.price : null;
-                    const saleUnit =
-                      basePrice !== null
-                        ? unitPrice(basePrice, discountPercent)
+                    const resolved =
+                      product?.price && product.price > 0
+                        ? resolveStoreUnitPrice(
+                            product.price,
+                            product.itemId,
+                            pricing,
+                          )
                         : null;
+                    const saleUnit = resolved?.unitPrice ?? null;
                     const lineTotal =
                       saleUnit !== null ? saleUnit * item.quantity : null;
 
@@ -882,12 +904,15 @@ export default function CatalogView({
                             {(showPrices || lineTotal !== null) &&
                               lineTotal !== null &&
                               saleUnit !== null &&
-                              basePrice !== null && (
+                              resolved && (
                               <div className="mt-1">
-                                {discountPercent > 0 && saleUnit < basePrice ? (
+                                {resolved.showStrike ? (
                                   <>
                                     <p className="text-xs text-gray-400 line-through">
-                                      {formatPrice(basePrice * item.quantity, locale)}
+                                      {formatPrice(
+                                        resolved.compareAtPrice * item.quantity,
+                                        locale,
+                                      )}
                                     </p>
                                     <p className="text-sm font-semibold text-emerald-700">
                                       {formatPrice(lineTotal, locale)}
@@ -933,7 +958,7 @@ export default function CatalogView({
                 {orderTotal > 0 && (
                   <div className="shrink-0 border-t border-gray-200 bg-white px-4 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)]">
                     <div className="space-y-2 rounded-xl bg-emerald-50 px-4 py-3">
-                      {discountPercent > 0 &&
+                      {effectiveDiscountPercent > 0 &&
                         cartSubtotalBeforeDiscount > cartSubtotal && (
                           <div className="flex items-center justify-between text-sm text-gray-700">
                             <span>{t.productsSubtotal}</span>
@@ -949,7 +974,10 @@ export default function CatalogView({
                         )}
                       {deliveryFee > 0 && (
                         <>
-                          {!(discountPercent > 0 && cartSubtotalBeforeDiscount > cartSubtotal) && (
+                          {!(
+                            effectiveDiscountPercent > 0 &&
+                            cartSubtotalBeforeDiscount > cartSubtotal
+                          ) && (
                             <div className="flex items-center justify-between text-sm text-gray-700">
                               <span>{t.productsSubtotal}</span>
                               <span>{formatPrice(cartSubtotal, locale)}</span>

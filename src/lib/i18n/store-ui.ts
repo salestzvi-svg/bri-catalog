@@ -58,6 +58,10 @@ export const storeUi = {
     allLabels: "הכל",
     language: "English",
     languageAria: "Switch to English",
+    developerFooterAria: "פותח האפליקציה",
+    developerFooterLine1: "פותח ונבנה על ידי yyautomation",
+    developerFooterLine2: "פתרונות דיגיטליים חכמים לעסקים",
+    developerFooterContact: "לפרטים נוספים",
   },
   en: {
     dir: "ltr" as const,
@@ -114,6 +118,10 @@ export const storeUi = {
     allLabels: "All",
     language: "עברית",
     languageAria: "עבור לעברית",
+    developerFooterAria: "Application developer",
+    developerFooterLine1: "Developed by yyautomation",
+    developerFooterLine2: "Smart digital solutions for business",
+    developerFooterContact: "Contact us",
   },
 } as const;
 

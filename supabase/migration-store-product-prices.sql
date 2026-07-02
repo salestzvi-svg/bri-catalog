@@ -14,3 +14,6 @@ create index if not exists store_product_prices_store_id_idx
 
 alter table stores
   add column if not exists discount_applies_to_custom_prices boolean not null default false;
+
+alter table store_product_prices enable row level security;
+revoke all on table store_product_prices from anon, authenticated, public;

@@ -185,7 +185,7 @@ function ProductGrid({
   products,
   cart,
   quantities,
-  setQuantities,
+  setProductQuantity,
   onAddToCart,
   onImageClick,
   showPrices,
@@ -196,9 +196,7 @@ function ProductGrid({
   products: CatalogProduct[];
   cart: Record<string, number>;
   quantities: Record<number, number>;
-  setQuantities: React.Dispatch<
-    React.SetStateAction<Record<number, number>>
-  >;
+  setProductQuantity: (product: CatalogProduct, value: number) => void;
   onAddToCart: (product: CatalogProduct) => void;
   onImageClick: (src: string, alt: string) => void;
   showPrices: boolean;
@@ -268,13 +266,12 @@ function ProductGrid({
 
             <div className="mt-auto space-y-1 pt-1.5">
               <QuantityStepper
-                value={quantities[product.itemId] ?? 1}
-                onChange={(value) =>
-                  setQuantities((prev) => ({
-                    ...prev,
-                    [product.itemId]: value,
-                  }))
+                value={
+                  inCart
+                    ? cart[product.sku] ?? 1
+                    : quantities[product.itemId] ?? 1
                 }
+                onChange={(value) => setProductQuantity(product, value)}
                 t={t}
                 compact
               />
@@ -435,6 +432,17 @@ export default function CatalogView({
       ...prev,
       [product.sku]: qty,
     }));
+  }
+
+  function setProductQuantity(product: CatalogProduct, value: number) {
+    const qty = Math.max(1, value);
+    setQuantities((prev) => ({ ...prev, [product.itemId]: qty }));
+    setCart((prev) => {
+      if ((prev[product.sku] ?? 0) > 0) {
+        return { ...prev, [product.sku]: qty };
+      }
+      return prev;
+    });
   }
 
   function removeFromCart(sku: string) {
@@ -795,7 +803,7 @@ export default function CatalogView({
             products={categoryProducts}
             cart={cart}
             quantities={quantities}
-            setQuantities={setQuantities}
+            setProductQuantity={setProductQuantity}
             onAddToCart={addToCart}
             onImageClick={(src, alt) => setLightbox({ src, alt })}
             showPrices={showPrices}

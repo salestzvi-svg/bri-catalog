@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireStoreSession } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/server";
+import { isFulfillmentSku, meetsOrderMinimum, ORDER_MINIMUM } from "@/lib/shipping";
 import { trimStoreOrdersForChannel } from "@/lib/store-orders";
 import type { StoreOrderItem, WhatsAppChannel } from "@/lib/types";
 
@@ -53,6 +54,18 @@ export async function POST(request: Request) {
   const items = parseItems(body.items);
   if (!items) {
     return NextResponse.json({ error: "העגלה ריקה או לא תקינה" }, { status: 400 });
+  }
+
+  const productsSubtotal = items.reduce((sum, item) => {
+    if (isFulfillmentSku(item.sku)) return sum;
+    return sum + (item.lineTotal ?? 0);
+  }, 0);
+
+  if (!meetsOrderMinimum(productsSubtotal)) {
+    return NextResponse.json(
+      { error: `מינימום הזמנה הוא ₪${ORDER_MINIMUM} לסכום המוצרים` },
+      { status: 400 },
+    );
   }
 
   const totalAmount = Number(body.totalAmount ?? 0);

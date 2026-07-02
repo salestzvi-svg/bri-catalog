@@ -18,10 +18,11 @@ import {
 import {
   calculateDeliveryFee,
   calculateOrderTotal,
+  DELIVERY_SKU,
+  meetsOrderMinimum,
+  SELF_PICKUP_SKU,
 } from "@/lib/shipping";
 import DeveloperFooter from "@/components/DeveloperFooter";
-
-const DELIVERY_SKU = "משלוח";
 
 function buildWhatsAppUrl(
   phone: string,
@@ -29,7 +30,12 @@ function buildWhatsAppUrl(
   items: { sku: string; quantity: number; name?: string }[],
   notes: string,
   total: number,
-  options?: { subtotal?: number; deliveryFee?: number },
+  options?: {
+    subtotal?: number;
+    deliveryFee?: number;
+    selfPickup?: boolean;
+    selfPickupLabel?: string;
+  },
 ) {
   return buildWhatsAppOrderUrl(phone, storeName, items, notes, total, options);
 }
@@ -323,6 +329,7 @@ export default function CatalogView({
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState<Record<string, number>>({});
   const [notes, setNotes] = useState("");
+  const [selfPickup, setSelfPickup] = useState(false);
   const [quantities, setQuantities] = useState<Record<number, number>>({});
   const [cartOpen, setCartOpen] = useState(false);
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(
@@ -471,14 +478,38 @@ export default function CatalogView({
   }, [cartItems, skuToProduct]);
 
   const deliveryFee = useMemo(
-    () => calculateDeliveryFee(cartSubtotal),
-    [cartSubtotal],
+    () => calculateDeliveryFee(cartSubtotal, selfPickup),
+    [cartSubtotal, selfPickup],
   );
 
   const orderTotal = useMemo(
-    () => calculateOrderTotal(cartSubtotal),
-    [cartSubtotal],
+    () => calculateOrderTotal(cartSubtotal, selfPickup),
+    [cartSubtotal, selfPickup],
   );
+
+  const canSubmitOrder =
+    cartItems.length > 0 && meetsOrderMinimum(cartSubtotal);
+
+  function orderMessageOptions() {
+    return {
+      subtotal: cartSubtotal,
+      deliveryFee,
+      selfPickup,
+      selfPickupLabel: t.selfPickup,
+    };
+  }
+
+  function guardOrderSubmission(): boolean {
+    if (cartItems.length === 0) {
+      alert(t.emptyCart);
+      return false;
+    }
+    if (!meetsOrderMinimum(cartSubtotal)) {
+      alert(t.orderMinimumAlert);
+      return false;
+    }
+    return true;
+  }
 
   function openCategory(categoryId: string) {
     setSelectedCategoryId(categoryId);
@@ -518,7 +549,15 @@ export default function CatalogView({
       };
     });
 
-    if (deliveryFee > 0) {
+    if (selfPickup) {
+      orderItems.push({
+        sku: SELF_PICKUP_SKU,
+        name: t.selfPickup,
+        quantity: 1,
+        unitPrice: 0,
+        lineTotal: 0,
+      });
+    } else if (deliveryFee > 0) {
       orderItems.push({
         sku: DELIVERY_SKU,
         name: t.deliveryFee,
@@ -554,14 +593,12 @@ export default function CatalogView({
   function clearOrderState() {
     setCart({});
     setNotes("");
+    setSelfPickup(false);
     setCartOpen(false);
   }
 
   async function sendOrderViaWhatsApp() {
-    if (cartItems.length === 0) {
-      alert(t.emptyCart);
-      return;
-    }
+    if (!guardOrderSubmission()) return;
 
     await persistOrder();
 
@@ -572,7 +609,7 @@ export default function CatalogView({
         orderItemsForSend(),
         notes,
         orderTotal,
-        { subtotal: cartSubtotal, deliveryFee },
+        orderMessageOptions(),
       ),
       "_blank",
       "noopener,noreferrer",
@@ -582,10 +619,7 @@ export default function CatalogView({
   }
 
   async function sendOrderViaEmail() {
-    if (cartItems.length === 0) {
-      alert(t.emptyCart);
-      return;
-    }
+    if (!guardOrderSubmission()) return;
 
     const items = orderItemsForSend();
     const orderNotes = notes;
@@ -600,7 +634,7 @@ export default function CatalogView({
       items,
       orderNotes,
       total,
-      { subtotal: cartSubtotal, deliveryFee },
+      orderMessageOptions(),
     );
 
     clearOrderState();
@@ -608,7 +642,7 @@ export default function CatalogView({
   }
 
   return (
-    <div className="mx-auto min-h-screen max-w-lg bg-gray-50 pb-36">
+    <div className="mx-auto min-h-screen max-w-lg bg-gray-50 pb-48">
       <header className="sticky top-0 z-20 border-b border-emerald-100 bg-white shadow-sm">
         <div className="flex items-center gap-1.5 px-2 py-2">
           <div className="min-w-0 flex-1">
@@ -802,6 +836,22 @@ export default function CatalogView({
 
       <footer className="fixed bottom-0 left-0 right-0 z-20 border-t border-gray-200 bg-white p-2 shadow-[0_-4px_16px_rgba(0,0,0,0.06)]">
         <div className="mx-auto max-w-lg space-y-1.5">
+          {cartItems.length > 0 && !canSubmitOrder && (
+            <p className="rounded-lg bg-red-50 px-2.5 py-1.5 text-center text-[11px] font-medium text-red-700">
+              {t.orderMinimumNotMet}
+            </p>
+          )}
+          {cartItems.length > 0 && (
+            <label className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-xs text-gray-700">
+              <input
+                type="checkbox"
+                checked={selfPickup}
+                onChange={(e) => setSelfPickup(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-gray-300"
+              />
+              {t.selfPickup}
+            </label>
+          )}
           <input
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
@@ -812,9 +862,9 @@ export default function CatalogView({
             <button
               type="button"
               onClick={sendOrderViaWhatsApp}
-              disabled={cartItems.length === 0}
+              disabled={!canSubmitOrder}
               className={`rounded-lg px-2 py-2 text-xs font-bold text-white ${
-                cartItems.length > 0 ? "bg-green-600" : "bg-gray-400"
+                canSubmitOrder ? "bg-green-600" : "bg-gray-400"
               }`}
             >
               {t.sendWhatsAppOrder}
@@ -822,9 +872,9 @@ export default function CatalogView({
             <button
               type="button"
               onClick={sendOrderViaEmail}
-              disabled={cartItems.length === 0}
+              disabled={!canSubmitOrder}
               className={`rounded-lg border px-2 py-2 text-xs font-bold ${
-                cartItems.length > 0
+                canSubmitOrder
                   ? "border-emerald-600 text-emerald-800"
                   : "border-gray-300 text-gray-400"
               }`}
@@ -957,6 +1007,23 @@ export default function CatalogView({
                   })}
                 </ul>
 
+                <div className="shrink-0 border-t border-gray-100 px-4 py-3">
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={selfPickup}
+                      onChange={(e) => setSelfPickup(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                    {t.selfPickup}
+                  </label>
+                  {!canSubmitOrder && (
+                    <p className="mt-2 text-xs font-medium text-red-600">
+                      {t.orderMinimumNotMet}
+                    </p>
+                  )}
+                </div>
+
                 {orderTotal > 0 && (
                   <div className="shrink-0 border-t border-gray-200 bg-white px-4 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)]">
                     <div className="space-y-2 rounded-xl bg-emerald-50 px-4 py-3">
@@ -974,7 +1041,7 @@ export default function CatalogView({
                             </div>
                           </div>
                         )}
-                      {deliveryFee > 0 && (
+                      {selfPickup ? (
                         <>
                           {!(
                             effectiveDiscountPercent > 0 &&
@@ -986,10 +1053,28 @@ export default function CatalogView({
                             </div>
                           )}
                           <div className="flex items-center justify-between text-sm text-gray-700">
-                            <span>{t.deliveryFee}</span>
-                            <span>{formatPrice(deliveryFee, locale)}</span>
+                            <span>{t.selfPickup}</span>
+                            <span>₪0</span>
                           </div>
                         </>
+                      ) : (
+                        deliveryFee > 0 && (
+                          <>
+                            {!(
+                              effectiveDiscountPercent > 0 &&
+                              cartSubtotalBeforeDiscount > cartSubtotal
+                            ) && (
+                              <div className="flex items-center justify-between text-sm text-gray-700">
+                                <span>{t.productsSubtotal}</span>
+                                <span>{formatPrice(cartSubtotal, locale)}</span>
+                              </div>
+                            )}
+                            <div className="flex items-center justify-between text-sm text-gray-700">
+                              <span>{t.deliveryFee}</span>
+                              <span>{formatPrice(deliveryFee, locale)}</span>
+                            </div>
+                          </>
+                        )
                       )}
                       <div className="flex items-center justify-between">
                         <span className="font-bold text-gray-900">{t.totalPayment}</span>
